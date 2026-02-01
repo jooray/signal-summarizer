@@ -70,7 +70,7 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/signal-group-summarizer.git
+   git clone https://github.com/jooray/signal-group-summarizer.git
    cd signal-group-summarizer
    ```
 
