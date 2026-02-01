@@ -2,6 +2,7 @@ config.json
 messages.db
 poetry.lock
 summary*.md
+sync-messages.sh
 outputs/*
 run.sh
 run*.sh

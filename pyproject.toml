@@ -25,6 +25,9 @@ unstructured = {extras = ["local"], version = "^0.16.5"}
 langchain-openai = "^0.2.9"
 yt-dlp = "^2024.11.18"
 scikit-learn = "^1.6.0"
+hdbscan = "^0.8.33"
+python-louvain = "^0.16"
+networkx = "^3.0"
 
 [tool.poetry.scripts]
 summarize_signal_group = "summarize_signal_group:main"

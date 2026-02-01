@@ -383,15 +383,32 @@ def embedding_cluster_and_merge(themes_list, group_config, similarity_prompt_tem
     # Perform embedding-based clustering
     clustering_config = group_config.get("embedding_clustering", {})
     model_name = clustering_config.get("model", "mxbai-embed-large")
-    eps = clustering_config.get("eps", 0.4)
-    min_samples = clustering_config.get("min_samples", 2)
-    logging.info(f"Clustering themes with embeddings using model {model_name} and eps={eps} and min samples = {min_samples}")
+    method = clustering_config.get("method", "hdbscan")
+
+    # Get method-specific parameters
+    if method == "hdbscan":
+        kwargs = {
+            "min_cluster_size": clustering_config.get("min_cluster_size", 2),
+            "min_samples": clustering_config.get("hdbscan_min_samples", 1)
+        }
+    elif method == "louvain":
+        kwargs = {
+            "threshold": clustering_config.get("similarity_threshold", 0.5),
+            "resolution": clustering_config.get("resolution", 1.0)
+        }
+    else:  # dbscan
+        kwargs = {
+            "eps": clustering_config.get("eps", 0.3),
+            "min_samples": clustering_config.get("min_samples", 2)
+        }
+
+    logging.info(f"Clustering themes using {method} with params: {kwargs}")
+
     clusters_indices = cluster_themes_with_embeddings(
-        #themes=[f"{theme.name}: {theme.summary}" for theme in all_themes],
-        themes=[f"{theme.name}" for theme in all_themes],
+        themes=[f"{theme.name}: {theme.summary}" for theme in all_themes],
         model_name=model_name,
-        eps=eps,
-        min_samples=min_samples
+        method=method,
+        **kwargs
     )
     logging.info(f"Embeddings returned these clusters: {clusters_indices}")
 
@@ -714,7 +731,7 @@ def build_summary_from_themes(themes, group_config, database, group_id, since, u
     for idx, theme in enumerate(themes.themes, 1):
         summary_lines.append(f"## **{capitalize_theme_name(theme.name)}**\n{theme.summary}")
         if theme.dissenting_opinions:
-            summary_lines.append(f"**Dissenting opinions:** {theme.dissenting_opinions}")
+            summary_lines.append(f"\n**Dissenting opinions:** {theme.dissenting_opinions}")
 
     # Add links section
     links_section = build_links_section(
@@ -767,7 +784,7 @@ def summarize_group(config, args, group_id, llm_dict, vision_util, stt_model, re
     else:
         messages = fetch_messages(database, group_id, since, until)
         group_resume_data['messages'] = messages
-        if resume_file:  # Only save if resume file is provided
+        if resume_file:
             save_resume_file(resume_file, resume_data)
 
     if not messages:

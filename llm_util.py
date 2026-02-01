@@ -199,6 +199,6 @@ class LLMUtil:
                 self.logger.error(f"Translation failed for a chunk: {e}")
                 translated_chunks.append(chunk)  # Append the original chunk if translation fails
 
-        # Recombine the translated chunks
-        translated_text = '\n'.join(translated_chunks)
+        # Recombine the translated chunks with double newlines to preserve markdown structure
+        translated_text = '\n\n'.join(translated_chunks)
         return translated_text

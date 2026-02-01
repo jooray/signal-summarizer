@@ -1,58 +1,47 @@
 {
   "defaults": {
-    "database": "messages.db",
+    "database": "./messages.db",
     "attachment_root": "./",
     "output_file": "summary.md",
+    "output_file_orig": "summary_orig.md",
     "language": "English",
-    "summarizer_config": {
-      "endpoint": "http://127.0.0.1:11434",
-      "model": "dolphin-llama3:70b",
-      "prompt": "You will be given a list of group chat messages after TEXT: below. Your job is to summarize this in Markdown format, in a form of a digest. The goal is for the readers to have a summary into what the discussions in this group were about. The group's description is \"{group_description}\". The common topics are {common_topics}. Include these sections in the output markdown, each will be a heading starting with '#' on a new line, with thorough content and bulletpoints: {sections}. Today is {current_date}. TEXT:",
-      "recombination_prompt": "You have summarized group chat messages in Markdown format, but the prompt was too long. Now combine these several summaries into one summary. The goal is for the readers to have a glimpse into what the discussions in this group were about. The group's description is \"{group_description}\". The common topics are {common_topics}. Include these sections in the output markdown: {sections}. Today is {current_date}. SUMMARIES:",
-      "language_prompt": "You are a professional translator. Translate any text after the TEXT: below into {language} language. TEXT:",
-      "max_chunk_size": 128000
-    },
     "models": {
-      "phi4": {
-        "provider": "ollama",
-        "endpoint": "http://127.0.0.1:11434",
-        "model": "phi4:latest"
-      },
-      "gemma3": {
-        "provider": "ollama",
-        "endpoint": "http://127.0.0.1:11434",
-        "model": "gemma3:27b"
-      },
-      "dolphin-qwen": {
-        "provider": "ollama",
-        "endpoint": "http://127.0.0.1:11434",
-        "model": "mannix/dolphin-2.9.2-qwen2-72b:latest"
-      },
-      "venice-llama": {
-        "provider": "venice",
-        "model": "llama-3.1-405b",
-        "apiBase": "https://api.venice.ai/api/v1",
-        "apiKey": ""
-      },
-      "llama-33-70b": {
+      "local-llama": {
         "provider": "ollama",
         "endpoint": "http://127.0.0.1:11434",
         "model": "llama3.3:70b"
+      },
+      "local-vision": {
+        "provider": "ollama",
+        "endpoint": "http://127.0.0.1:11434",
+        "model": "llama3.2-vision:latest"
+      },
+      "openai": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "apiKey": "sk-your-openai-api-key"
+      },
+      "venice": {
+        "provider": "venice",
+        "model": "llama-3.3-70b",
+        "apiBase": "https://api.venice.ai/api/v1",
+        "apiKey": "your-venice-api-key"
       }
     },
     "themes": {
-      "model": "gemma3",
-      "prompt": "Analyze the following conversation and extract the main themes. For each theme, provide a theme name, a detailed summary of the theme, and any dissenting opinions. Ensure that the summaries are comprehensive and cover all relevant points discussed. Output in JSON format as specified, ensuring that the JSON keys are exactly as given and in English, even if the content is in Slovak.\n{format_instructions}\nNote that \"null\" is not a valid attribute value, use None or \"\" if there are no dissenting_opinions.\n\nGroup conversation log:\n{context}",
+      "model": "local-llama",
+      "prompt": "Analyze the following conversation and extract the main themes. For each theme, provide a theme name, a detailed summary of the theme, and any dissenting opinions. Ensure that the summaries are comprehensive and cover all relevant points discussed. Output in JSON format as specified, ensuring that the JSON keys are exactly as given and in English, even if the content is in another language.\n{format_instructions}\nNote that \"null\" is not a valid attribute value, use None or \"\" if there are no dissenting_opinions.\n\nGroup conversation log:\n{context}",
       "max_chunk_size": 5000
     },
     "embedding_clustering": {
       "enabled": true,
       "model": "mxbai-embed-large",
-      "eps": 0.25,
-      "min_samples": 2
+      "method": "hdbscan",
+      "min_cluster_size": 2,
+      "hdbscan_min_samples": 1
     },
     "themes_recombination": {
-      "model": "gemma3",
+      "model": "local-llama",
       "batch_size": 5,
       "max_iterations": 8,
       "convergence_threshold": 3,
@@ -61,15 +50,15 @@
       "merging_prompt": "Merge the following themes into a single consolidated theme. The consolidated theme should include all content from all the themes it's merging. Provide the merged theme in the specified format. Do not mention in the response that it's a merged theme, only merge the topics.\n\nThemes to merge:\n{context}\n\n{format_instructions}"
     },
     "translation": {
-      "model": "llama-33-70b",
+      "model": "local-llama",
       "max_chunk_size": 5000,
-      "prompt": "Prelož text, ktorý nasleduje za \"ORIGINAL TEXT:\" do slovenského jazyka. Ako výstup daj preložený text bez akýchkoľvek potvrdení a dodatočných informácií, ale zachovaj odkazy a iné formátovanie.\nORIGINAL TEXT:\n{context}\nPreložený text:\n"
+      "prompt": "Translate the following markdown text to {language}. IMPORTANT: 1) Preserve ALL markdown formatting (headings ##, bold **text**, links, bullets) 2) Preserve ALL blank lines between sections 3) Output ONLY the translated text. TEXT:\n{context}"
     },
     "vision_config": {
       "enabled": true,
       "endpoint": "http://127.0.0.1:11434",
       "model": "llama3.2-vision:latest",
-      "prompt": "This is an image from a group chat, from group {group_description}, which often discusses {common_topics}. Describe this image, so it can be used in a summary of the group topic. If there is a text, transcribe it fully. Do not add hashtags, only transcribe and describe, preferably in less than one paragraph."
+      "prompt": "Describe the following image from a group chat. The group's description is \"{group_description}\", and common topics are {common_topics}. Provide a description that can be used in a summary of the group topic. If there is text in the image, transcribe it fully. Do not add hashtags or extra comments. Output only the description, preferably in less than one paragraph."
     },
     "speech_to_text": {
       "enabled": true,
@@ -77,7 +66,7 @@
       "n_threads": 1
     },
     "link_summarizer": {
-      "model": "gemma3",
+      "model": "local-llama",
       "prompt": "Summarize the webpage content below. Extract the title as well. Output the result in JSON format with 'title', 'summary', and 'error' fields. The 'title' and 'summary' should be single lines without newlines and less than {max_title_length} and {max_summary_length} characters respectively. If the content seems to be an error (such as HTTP error message or empty string), provide it in the 'error' field and leave 'title' and 'summary' empty.\n\n{format_instructions}\n\nWebpage to summarize:\n\n{context}",
       "max_title_length": 300,
       "max_summary_length": 600,
@@ -85,18 +74,17 @@
     }
   },
   "groups": {
-    "D0abcdabcdsdasjdhasaaabcdjsdhaksaaabcdjdhabc=": {
-      "output_file": "summary_cool_nostr.md",
-      "group_description": "Cool people of Nostr, a group where we share Nostr tips and discussions.",
-      "common_topics": "Nostr, decentralized social media, cryptographic identity",
-      "sections": ["Discussed topics", "Highlights", "Tips & tricks"]
+    "D0abcdasdasdasjdhaskjdhakjsdhaksjhdaksjdhkas=": {
+      "output_file": "outputs/summary_group1.md",
+      "group_description": "Example group where we discuss technology, finance, and current events.",
+      "common_topics": "Technology, investments, politics, and digital trends.",
+      "language": "English"
     },
-    "XABbcdasabcdasabcdkjdhabcdhaksjhdabcdddddd=": {
-      "output_file": "summary_bitcoin_memecka.md",
-      "group_description": "Bitcoinové memečka zo Slovenska, where we share and discuss bitcoin memes in Slovak.",
-      "common_topics": "Bitcoin, kryptomeny, memy",
-      "sections": ["Zdieľané memečka", "Diskusie", "Tipy a triky"],
-      "language": "Slovak"
+    "XABbcdasdasdasjdhaskjdhakjsdhaksjhdaksjdhkas=": {
+      "output_file": "outputs/summary_memes.md",
+      "group_description": "Memes Group, where we share and discuss memes.",
+      "common_topics": "Memes, humor, internet culture",
+      "language": "English"
     }
   }
 }

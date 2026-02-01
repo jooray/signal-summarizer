@@ -8,16 +8,16 @@ It can use fully local models. For understanding images, it uses multimodal mode
 
 For voice recongition (voice messages), it uses whisper and then LLM.
 
-It generates topics from LLMs, downloads webpages to describe them, then uses embedding clusters 
+It generates topics from LLMs, downloads webpages to describe them, then uses embedding clusters
 to detect similar themes, merge them (we can be way beyond context window and even when we're not,
 long texts would usually not work due to problems with keeping attention on many topics at the
 same time).
 
-It also uses the LLM for the final translation step. It will understand topics in any language, 
+It also uses the LLM for the final translation step. It will understand topics in any language,
 but it will internally generate English text, which it can then translate back to a specified
 language.
 
-The app can resume operation if stopped. 
+The app can resume operation if stopped.
 
 Use [signal-message-processor](https://github.com/jooray/signal-message-processor) to collect the
 messages, it can be run on a different computer than the one that does the summaries.
@@ -28,8 +28,8 @@ locally.
 ### But also does not work super well...
 
 If you have improvements of the algorithm, or even the prompts, let me know. The problem with this
-approach is it is extremely sensitive to error - either generating too many topics that are too 
-similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" or 
+approach is it is extremely sensitive to error - either generating too many topics that are too
+similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" or
 "cryptocurrency").
 
 ## Features
@@ -47,7 +47,7 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 - **Modular Design**: Utilizes separate components for LLM interactions, vision processing, and speech-to-text.
 - **Resume Functionality**: Supports resuming the summarization process from the last successful step using a resume file.
 - **Customizable Similarity Threshold**: Allows configuration of the similarity threshold for merging themes during recombination.
-- **Embedding-Based Clustering**: Optionally group themes first with embeddings + clustering before verifying with the existing similarity prompt (reduces the number of LLM calls).
+- **New Embedding-Based Clustering**: Optionally group themes first with embeddings + clustering before verifying with the existing similarity prompt (reduces the number of LLM calls).
 - **Selective Redo Options**: Provides command-line options to redo specific parts of the summarization process.
 
 ## Requirements
@@ -67,14 +67,21 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 
 ## Installation
 
-**Install dependencies using Poetry:**
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/yourusername/signal-group-summarizer.git
+   cd signal-group-summarizer
+   ```
+
+2. **Install dependencies using Poetry:**
 
    ```bash
    pip install poetry
    poetry install
    ```
 
-**Configure the tool:**
+3. **Configure the tool:**
 
    - Copy `config.json.sample` to `config.json` and adjust settings as needed.
 
@@ -208,9 +215,15 @@ You can also specify a default resume file in the `config.json` under the `"resu
 
 Optionally, you can enable an **embedding-based clustering** step to reduce the number of LLM calls and better group similar themes before verifying them with the existing similarity prompt.
 
-1. In `config.json`, set `"embedding_clustering.enabled": true` and configure the `"model"`, `"eps"`, and `"min_samples"` parameters.
-2. During the summarization process, the tool will use DBSCAN on the theme embeddings to form initial clusters.  
-3. Only themes *within* each cluster will then be processed via the typical similarity_prompt-based merging.
+The tool supports three clustering algorithms for grouping similar themes:
+
+| Algorithm | Best For | Tuning Required |
+|-----------|----------|-----------------|
+| **HDBSCAN** (default) | General use | None |
+| **DBSCAN** | Known density | Yes (`eps`) |
+| **Louvain** | Large datasets | Minimal |
+
+**Recommendation**: Use HDBSCAN (default) - it automatically handles varying density without parameter tuning and produces better semantic groupings.
 
 Example `config.json` snippet:
 
@@ -218,10 +231,25 @@ Example `config.json` snippet:
 "embedding_clustering": {
   "enabled": true,
   "model": "mxbai-embed-large",
-  "eps": 0.3,
-  "min_samples": 2
+  "method": "hdbscan",
+  "min_cluster_size": 2,
+  "hdbscan_min_samples": 1
 }
 ```
+
+#### Algorithm-Specific Parameters
+
+**HDBSCAN** (recommended):
+- `min_cluster_size`: 2-3 for small datasets, 3-5 for large
+- `hdbscan_min_samples`: 1 for sensitivity, 2 for stricter
+
+**DBSCAN**:
+- `eps`: 0.2-0.5 (requires tuning per dataset)
+- `min_samples`: typically 2
+
+**Louvain**:
+- `similarity_threshold`: 0.4-0.6 (higher = tighter clusters)
+- `resolution`: <1.0 fewer clusters, >1.0 more clusters
 
 ## Configuration
 
@@ -239,7 +267,7 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
 - **output_file**: Default output file for summaries.
 - **language**: The language to ensure in the summaries.
 - **resume_file**: Path to the resume file for saving progress (optional).
-- **embedding_clustering**: (Optional) Settings for embedding-based DBSCAN clustering of themes.
+- **embedding_clustering**: (Optional) Settings for embedding-based clustering of themes (supports HDBSCAN, DBSCAN, and Louvain methods).
 
 ### Configuration Breakdown
 
@@ -257,10 +285,15 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
     Only themes with a similarity rating equal to or above the `similarity_threshold` will be merged.
 
 - **embedding_clustering**:
-  - **enabled**: If set to true, the tool will first cluster extracted themes with an embedding model and DBSCAN.
+  - **enabled**: If set to true, the tool will first cluster extracted themes with an embedding model.
   - **model**: The Ollama embedding model used for obtaining embeddings.
-  - **eps**: The maximum distance between two samples for them to be considered in the same neighborhood by DBSCAN.
-  - **min_samples**: The minimum number of samples in a neighborhood for a point to be considered a core point.
+  - **method**: Clustering algorithm to use: `hdbscan` (default), `dbscan`, or `louvain`.
+  - **min_cluster_size**: (HDBSCAN) Minimum cluster size (default: 2).
+  - **hdbscan_min_samples**: (HDBSCAN) Minimum samples for core points (default: 1).
+  - **eps**: (DBSCAN) Maximum distance between samples in the same neighborhood.
+  - **min_samples**: (DBSCAN) Minimum samples for a core point.
+  - **similarity_threshold**: (Louvain) Minimum similarity for edge creation (default: 0.5).
+  - **resolution**: (Louvain) Resolution parameter for community detection (default: 1.0).
 
 - **models**: Define all LLM models you intend to use, specifying their providers (`ollama`, `venice`, or `openai`), endpoints, and necessary credentials.
 
