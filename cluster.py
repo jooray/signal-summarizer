@@ -4,8 +4,27 @@ from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_distances, cosine_similarity
 import logging
 
-def cluster_themes_with_embeddings(themes, model_name="mxbai-embed-large",
-                                    method="hdbscan", **kwargs):
+
+def cluster_embeddings(embeddings, method="hdbscan", **kwargs):
+    """Cluster a precomputed embedding matrix."""
+    if embeddings is None or len(embeddings) == 0:
+        return []
+
+    if method == "hdbscan":
+        return _cluster_hdbscan(embeddings, **kwargs)
+    elif method == "louvain":
+        return _cluster_louvain(embeddings, **kwargs)
+    else:  # dbscan (fallback)
+        return _cluster_dbscan(embeddings, **kwargs)
+
+
+def cluster_themes_with_embeddings(
+    themes,
+    model_name="mxbai-embed-large",
+    method="hdbscan",
+    return_embeddings=False,
+    **kwargs,
+):
     """
     Unified clustering interface with multiple algorithm options.
 
@@ -26,13 +45,11 @@ def cluster_themes_with_embeddings(themes, model_name="mxbai-embed-large",
     # Generate embeddings (shared across all methods)
     embeddings = _generate_embeddings(themes, model_name)
 
-    # Route to appropriate clustering method
-    if method == "hdbscan":
-        return _cluster_hdbscan(embeddings, **kwargs)
-    elif method == "louvain":
-        return _cluster_louvain(embeddings, **kwargs)
-    else:  # dbscan (fallback)
-        return _cluster_dbscan(embeddings, **kwargs)
+    clusters = cluster_embeddings(embeddings, method=method, **kwargs)
+    if return_embeddings:
+        return clusters, embeddings
+    return clusters
+
 
 def _generate_embeddings(themes, model_name):
     """Generate embeddings using Ollama."""
@@ -42,11 +59,13 @@ def _generate_embeddings(themes, model_name):
         embeddings.append(resp["embedding"])
     return np.array(embeddings)
 
+
 def _cluster_dbscan(embeddings, eps=0.3, min_samples=2, **kwargs):
     """DBSCAN clustering (original implementation)."""
     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine")
     labels = dbscan.fit_predict(embeddings)
     return _labels_to_clusters(labels)
+
 
 def _cluster_hdbscan(embeddings, min_cluster_size=2, min_samples=1, **kwargs):
     """HDBSCAN clustering with automatic density handling."""
@@ -62,8 +81,8 @@ def _cluster_hdbscan(embeddings, min_cluster_size=2, min_samples=1, **kwargs):
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
-        metric='precomputed',
-        cluster_selection_method='eom'
+        metric="precomputed",
+        cluster_selection_method="eom",
     )
 
     labels = clusterer.fit_predict(distance_matrix)
@@ -75,6 +94,7 @@ def _cluster_hdbscan(embeddings, min_cluster_size=2, min_samples=1, **kwargs):
         logging.debug(f"High outlier themes (score > 0.7): {high_outliers.tolist()}")
 
     return _labels_to_clusters(labels)
+
 
 def _cluster_louvain(embeddings, threshold=0.5, resolution=1.0, **kwargs):
     """Graph-based Louvain community detection."""
@@ -111,7 +131,9 @@ def _cluster_louvain(embeddings, threshold=0.5, resolution=1.0, **kwargs):
         return []
 
     # Run Louvain community detection
-    partition = community_louvain.best_partition(G, weight='weight', resolution=resolution)
+    partition = community_louvain.best_partition(
+        G, weight="weight", resolution=resolution
+    )
 
     # Convert partition to cluster lists
     clusters_dict = {}
@@ -121,11 +143,13 @@ def _cluster_louvain(embeddings, threshold=0.5, resolution=1.0, **kwargs):
         clusters_dict[community_id].append(node)
 
     # Filter out singleton clusters from isolated nodes
-    clusters = [c for c in clusters_dict.values()
-                if not (len(c) == 1 and c[0] in isolated)]
+    clusters = [
+        c for c in clusters_dict.values() if not (len(c) == 1 and c[0] in isolated)
+    ]
 
     logging.debug(f"Louvain found {len(clusters)} communities")
     return clusters
+
 
 def _labels_to_clusters(labels):
     """Convert label array to list of cluster indices."""

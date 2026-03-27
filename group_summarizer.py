@@ -18,7 +18,10 @@ from vision_util import VisionUtil
 import yt_dlp
 from resume_util import load_resume_file, save_resume_file, delete_resume_file
 
-warnings.filterwarnings("ignore", category=UserWarning, module='bs4')  # Suppress BeautifulSoup warnings
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="bs4"
+)  # Suppress BeautifulSoup warnings
+
 
 def setup_logging(log_level):
     # Configure logging with colors
@@ -26,15 +29,15 @@ def setup_logging(log_level):
     from colorlog import ColoredFormatter
 
     log_colors = {
-        'DEBUG': 'cyan',
-        'INFO': 'white',
-        'WARNING': 'yellow',
-        'ERROR': 'red',
-        'CRITICAL': 'bold_red',
+        "DEBUG": "cyan",
+        "INFO": "white",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "bold_red",
     }
     formatter = ColoredFormatter(
         "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        log_colors=log_colors
+        log_colors=log_colors,
     )
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
@@ -45,14 +48,21 @@ def setup_logging(log_level):
     root_logger.handlers = []  # Clear existing handlers
     root_logger.addHandler(handler)
 
-    for module_logger_name in ['llm_util', 'vision_util', 'ollama_client', 'resume_util']:
+    for module_logger_name in [
+        "llm_util",
+        "vision_util",
+        "ollama_client",
+        "resume_util",
+    ]:
         module_logger = logging.getLogger(module_logger_name)
         module_logger.setLevel(root_level)
         module_logger.propagate = True
 
+
 def load_config(config_file_path):
-    with open(config_file_path, 'r', encoding='utf-8') as f:
+    with open(config_file_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def get_group_config(config, group_id):
     from collections.abc import Mapping
@@ -65,14 +75,15 @@ def get_group_config(config, group_id):
                 source[key] = value
         return source
 
-    defaults = config.get('defaults', {})
-    group_config = config.get('groups', {}).get(group_id, {})
+    defaults = config.get("defaults", {})
+    group_config = config.get("groups", {}).get(group_id, {})
     merged_config = deep_merge(defaults.copy(), group_config)
     return merged_config
 
+
 def get_date_range(args):
     if args.since:
-        since = datetime.datetime.strptime(args.since, '%Y-%m-%d')
+        since = datetime.datetime.strptime(args.since, "%Y-%m-%d")
     elif args.last_week:
         since = datetime.datetime.now() - datetime.timedelta(days=7)
     elif args.last_month:
@@ -81,22 +92,25 @@ def get_date_range(args):
         since = None  # No lower limit
 
     if args.until:
-        until = datetime.datetime.strptime(args.until, '%Y-%m-%d')
+        until = datetime.datetime.strptime(args.until, "%Y-%m-%d")
     else:
         until = datetime.datetime.now()
 
     return since, until
 
+
 def fetch_messages(database, group_id, since, until):
     conn = sqlite3.connect(database)
     cursor = conn.cursor()
-    query = '''SELECT id, source, sourceName, timestamp, message, attachmentPaths, attachmentDescriptions, quoteText FROM messages WHERE groupId = ?'''
+    query = """SELECT id, source, sourceName, timestamp, message, attachmentPaths, attachmentDescriptions, quoteText FROM messages WHERE groupId = ?"""
     params = [group_id]
     if since:
-        query += ' AND timestamp >= ?'
-        params.append(int(since.timestamp() * 1000))  # Assuming timestamp is in milliseconds
+        query += " AND timestamp >= ?"
+        params.append(
+            int(since.timestamp() * 1000)
+        )  # Assuming timestamp is in milliseconds
     if until:
-        query += ' AND timestamp <= ?'
+        query += " AND timestamp <= ?"
         params.append(int(until.timestamp() * 1000))
 
     cursor.execute(query, params)
@@ -104,72 +118,90 @@ def fetch_messages(database, group_id, since, until):
     messages = []
     for row in rows:
         msg = {
-            'id': row[0],
-            'source': row[1],
-            'sourceName': row[2],
-            'timestamp': row[3],
-            'message': row[4],
-            'attachmentPaths': json.loads(row[5]) if row[5] else [],
-            'attachmentDescriptions': json.loads(row[6]) if row[6] else [],
-            'quoteText': row[7]
+            "id": row[0],
+            "source": row[1],
+            "sourceName": row[2],
+            "timestamp": row[3],
+            "message": row[4],
+            "attachmentPaths": json.loads(row[5]) if row[5] else [],
+            "attachmentDescriptions": json.loads(row[6]) if row[6] else [],
+            "quoteText": row[7],
         }
         messages.append(msg)
     conn.close()
     return messages
 
-def process_attachments(messages, group_config, regenerate, database, attachment_root, vision_util, stt_model):
+
+def process_attachments(
+    messages,
+    group_config,
+    regenerate,
+    database,
+    attachment_root,
+    vision_util,
+    stt_model,
+):
     conn = sqlite3.connect(database)
     cursor = conn.cursor()
 
     for msg in messages:
-        attachment_descriptions = msg.get('attachmentDescriptions', [])
+        attachment_descriptions = msg.get("attachmentDescriptions", [])
         if attachment_descriptions and not regenerate:
             continue  # Skip if already processed and not regenerating
 
         attachment_descriptions = []
-        for attachment_path_str in msg['attachmentPaths']:
+        for attachment_path_str in msg["attachmentPaths"]:
             attachment_path = attachment_root.joinpath(attachment_path_str)
             if not attachment_path.exists():
                 logging.warning(f"Attachment file not found: {attachment_path}")
                 continue
 
             extension = attachment_path.suffix.lower()
-            if extension in ['.png', '.jpg', '.jpeg', '.gif', '.webp'] and vision_util is not None:
-                vision_prompt_template = group_config['vision_config'].get('prompt')
+            if (
+                extension in [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+                and vision_util is not None
+            ):
+                vision_prompt_template = group_config["vision_config"].get("prompt")
                 prompt = vision_prompt_template.format(
-                    group_description=group_config.get('group_description', ''),
-                    common_topics=group_config.get('common_topics', ''),
-                    language=group_config.get('language', 'English')
+                    group_description=group_config.get("group_description", ""),
+                    common_topics=group_config.get("common_topics", ""),
+                    language=group_config.get("language", "English"),
                 )
                 logging.debug(f"Describing image with prompt:\n{prompt}")
                 description = vision_util.describe_image(attachment_path, prompt)
                 logging.debug(f"Image description:\n{description}")
                 attachment_descriptions.append(description)
-            elif extension in ['.aac', '.mp3', '.m4a'] and stt_model is not None:
+            elif extension in [".aac", ".mp3", ".m4a"] and stt_model is not None:
                 transcription = transcribe_audio(attachment_path, stt_model)
                 logging.debug(f"Audio transcription:\n{transcription}")
                 attachment_descriptions.append(transcription)
             else:
-                logging.warning(f"Unknown or disabled attachment type: {attachment_path}")
+                logging.warning(
+                    f"Unknown or disabled attachment type: {attachment_path}"
+                )
         # Update message with attachment descriptions
         if attachment_descriptions:
-            msg['attachmentDescriptions'] = attachment_descriptions
+            msg["attachmentDescriptions"] = attachment_descriptions
             # Save to database
-            cursor.execute('UPDATE messages SET attachmentDescriptions=? WHERE id=?',
-                           (json.dumps(attachment_descriptions), msg['id']))
+            cursor.execute(
+                "UPDATE messages SET attachmentDescriptions=? WHERE id=?",
+                (json.dumps(attachment_descriptions), msg["id"]),
+            )
             conn.commit()
     conn.close()
 
+
 def transcribe_audio(audio_path, stt_model):
     segments = stt_model.transcribe(str(audio_path))
-    transcribed_text = ''.join([segment.text for segment in segments]).strip()
+    transcribed_text = "".join([segment.text for segment in segments]).strip()
     return transcribed_text
+
 
 def process_links(messages, group_config, regenerate, database, group_id, llm):
     # Create 'links' table if it doesn't exist
     conn = sqlite3.connect(database)
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT,
@@ -180,24 +212,27 @@ def process_links(messages, group_config, regenerate, database, group_id, llm):
             error TEXT,
             UNIQUE(url, group_id, timestamp)
         )
-    ''')
+    """)
     conn.commit()
 
-    link_pattern = re.compile(r'https?://\S+')
+    link_pattern = re.compile(r"https?://\S+")
 
-    link_summarizer_config = group_config.get('link_summarizer', {})
-    prompt_template = link_summarizer_config.get('prompt', '')
-    max_title_length = link_summarizer_config.get('max_title_length', 300)
-    max_summary_length = link_summarizer_config.get('max_summary_length', 300)
-    max_chunk_size = link_summarizer_config.get('max_chunk_size', 5000)
+    link_summarizer_config = group_config.get("link_summarizer", {})
+    prompt_template = link_summarizer_config.get("prompt", "")
+    max_title_length = link_summarizer_config.get("max_title_length", 300)
+    max_summary_length = link_summarizer_config.get("max_summary_length", 300)
+    max_chunk_size = link_summarizer_config.get("max_chunk_size", 5000)
 
     for msg in messages:
-        if not msg.get('message'):
+        if not msg.get("message"):
             continue
-        urls = link_pattern.findall(msg['message'])
+        urls = link_pattern.findall(msg["message"])
         for url in urls:
             # Check if the link is already summarized unless regenerating
-            cursor.execute('SELECT summary FROM links WHERE url = ? AND group_id = ? AND timestamp = ?', (url, group_id, msg['timestamp']))
+            cursor.execute(
+                "SELECT summary FROM links WHERE url = ? AND group_id = ? AND timestamp = ?",
+                (url, group_id, msg["timestamp"]),
+            )
             result = cursor.fetchone()
             if result and not regenerate:
                 continue  # Already summarized
@@ -206,31 +241,35 @@ def process_links(messages, group_config, regenerate, database, group_id, llm):
             title, summary, error = summarize_link(url, llm, group_config)
 
             # Save to 'links' table
-            cursor.execute('INSERT OR REPLACE INTO links (url, group_id, timestamp, title, summary, error) VALUES (?, ?, ?, ?, ?, ?)',
-                           (url, group_id, msg['timestamp'], title, summary, error))
+            cursor.execute(
+                "INSERT OR REPLACE INTO links (url, group_id, timestamp, title, summary, error) VALUES (?, ?, ?, ?, ?, ?)",
+                (url, group_id, msg["timestamp"], title, summary, error),
+            )
             conn.commit()
     conn.close()
 
+
 def summarize_link(url, llm, group_config):
     # Check if YouTube
-    if 'youtube.com' in url or 'youtu.be' in url:
+    if "youtube.com" in url or "youtu.be" in url:
         return summarize_youtube_video(url, llm, group_config)
     else:
         return summarize_webpage(url, llm, group_config)
 
+
 def summarize_webpage(url, llm, group_config):
-    link_summarizer_config = group_config.get('link_summarizer', {})
-    prompt_template = link_summarizer_config.get('prompt', '')
-    max_title_length = link_summarizer_config.get('max_title_length', 300)
-    max_summary_length = link_summarizer_config.get('max_summary_length', 300)
-    max_chunk_size = link_summarizer_config.get('max_chunk_size', 5000)
+    link_summarizer_config = group_config.get("link_summarizer", {})
+    prompt_template = link_summarizer_config.get("prompt", "")
+    max_title_length = link_summarizer_config.get("max_title_length", 300)
+    max_summary_length = link_summarizer_config.get("max_summary_length", 300)
+    max_chunk_size = link_summarizer_config.get("max_chunk_size", 5000)
 
     try:
         loader = UnstructuredLoader(
             web_url=url,
             chunking_strategy="basic",
             max_characters=max_chunk_size,
-            include_orig_elements=False
+            include_orig_elements=False,
         )
         docs = loader.load()
 
@@ -244,11 +283,11 @@ def summarize_webpage(url, llm, group_config):
             context=docs[0].page_content,
             prompt_template=prompt_template,
             max_title_length=max_title_length,
-            max_summary_length=max_summary_length
+            max_summary_length=max_summary_length,
         )
 
         if not result.title:
-            result.title = docs[0].metadata.get('filename', url)
+            result.title = docs[0].metadata.get("filename", url)
 
         return result.title, result.summary, result.error
 
@@ -257,19 +296,20 @@ def summarize_webpage(url, llm, group_config):
         error = f"Failed to fetch webpage: {str(e)}"
         return None, None, error
 
+
 def summarize_youtube_video(url, llm, group_config):
     # Use yt-dlp to extract video title and description
-    link_summarizer_config = group_config.get('link_summarizer', {})
-    prompt_template = link_summarizer_config.get('prompt', '')
-    max_title_length = link_summarizer_config.get('max_title_length', 300)
-    max_summary_length = link_summarizer_config.get('max_summary_length', 300)
+    link_summarizer_config = group_config.get("link_summarizer", {})
+    prompt_template = link_summarizer_config.get("prompt", "")
+    max_title_length = link_summarizer_config.get("max_title_length", 300)
+    max_summary_length = link_summarizer_config.get("max_summary_length", 300)
 
     try:
-        ydl_opts = {'quiet': True}
+        ydl_opts = {"quiet": True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        title = info.get('title', '')
-        description = info.get('description', '')
+        title = info.get("title", "")
+        description = info.get("description", "")
 
         if not description.strip():
             logging.warning(f"No description available for YouTube video: {url}")
@@ -280,7 +320,7 @@ def summarize_youtube_video(url, llm, group_config):
             context=f"Video: {title}\n{description}",
             prompt_template=prompt_template,
             max_title_length=max_title_length,
-            max_summary_length=max_summary_length
+            max_summary_length=max_summary_length,
         )
 
         # Use the video's title if available
@@ -294,17 +334,18 @@ def summarize_youtube_video(url, llm, group_config):
         error = f"Failed to load YouTube video: {str(e)}"
         return None, None, error
 
+
 def build_links_section(database, group_config, group_id, since, until):
     conn = sqlite3.connect(database)
     cursor = conn.cursor()
     params = [group_id]
-    query = 'SELECT url, title, summary, error FROM links WHERE group_id = ?'
+    query = "SELECT url, title, summary, error FROM links WHERE group_id = ?"
 
     if since:
-        query += ' AND timestamp >= ?'
+        query += " AND timestamp >= ?"
         params.append(int(since.timestamp() * 1000))
     if until:
-        query += ' AND timestamp <= ?'
+        query += " AND timestamp <= ?"
         params.append(int(until.timestamp() * 1000))
 
     cursor.execute(query, params)
@@ -326,28 +367,32 @@ def build_links_section(database, group_config, group_id, since, until):
             links_section += f"- [{title}]({url})\n"
     return links_section
 
+
 def build_conversation_chunks(messages, group_config, llm_dict):
-    themes_config = group_config.get('themes', {})
-    max_chunk_size = themes_config.get('max_chunk_size', 5000)
+    themes_config = group_config.get("themes", {})
+    max_chunk_size = themes_config.get("max_chunk_size", 5000)
 
     messages_texts = []
     for msg in messages:
-        timestamp = datetime.datetime.fromtimestamp(msg['timestamp'] / 1000).strftime('%Y-%m-%d %H:%M')
+        timestamp = datetime.datetime.fromtimestamp(msg["timestamp"] / 1000).strftime(
+            "%Y-%m-%d %H:%M"
+        )
         text_parts = [f"[{timestamp}] {msg['sourceName']}: {msg['message']}"]
-        if msg.get('quoteText'):
-            text_parts.append(f"(In reply to: \"{msg['quoteText']}\")")
-        if msg.get('attachmentDescriptions'):
-            text_parts.extend(msg['attachmentDescriptions'])
-        messages_texts.append('\n'.join(text_parts))
+        if msg.get("quoteText"):
+            text_parts.append(f'(In reply to: "{msg["quoteText"]}")')
+        if msg.get("attachmentDescriptions"):
+            text_parts.extend(msg["attachmentDescriptions"])
+        messages_texts.append("\n".join(text_parts))
 
-    combined_text = '\n'.join(messages_texts)
-    themes_model_name = themes_config.get('model')
+    combined_text = "\n".join(messages_texts)
+    themes_model_name = themes_config.get("model")
     themes_llm = llm_dict.get(themes_model_name)
     return themes_llm.split_text(combined_text, max_chunk_size)
 
+
 def generate_themes(chunk, group_config, llm):
-    themes_config = group_config.get('themes', {})
-    themes_prompt_template = themes_config.get('prompt', '')
+    themes_config = group_config.get("themes", {})
+    themes_prompt_template = themes_config.get("prompt", "")
     # Generate structured themes
     try:
         logging.debug("Generating themes with prompt:")
@@ -356,7 +401,7 @@ def generate_themes(chunk, group_config, llm):
         themes = llm.generate_structured_output(
             prompt_template=themes_prompt_template,
             context=chunk,
-            pydantic_class=ConversationThemes
+            pydantic_class=ConversationThemes,
         )
         logging.debug(f"Generated themes:\n{themes}")
         return themes
@@ -364,10 +409,186 @@ def generate_themes(chunk, group_config, llm):
         logging.error(f"Failed to generate themes: {e}")
         return None
 
-def embedding_cluster_and_merge(themes_list, group_config, similarity_prompt_template, merging_prompt_template, llm):
+
+def build_theme_embedding_text(theme: ConversationTheme) -> str:
+    name = re.sub(r"\s+", " ", theme.name.strip())
+    summary = re.sub(r"\s+", " ", theme.summary.strip())
+    summary_sentences = re.split(r"(?<=[.!?])\s+", summary)
+    distilled_summary = " ".join(summary_sentences[:2]).strip()
+    if len(distilled_summary) > 240:
+        distilled_summary = distilled_summary[:237].rstrip() + "..."
+    return f"Theme: {name}\nSummary: {distilled_summary}"
+
+
+def build_theme_pair_signature(theme: ConversationTheme) -> str:
+    name = re.sub(r"\s+", " ", theme.name.strip())
+    summary = re.sub(r"\s+", " ", theme.summary.strip())
+    summary_sentences = re.split(r"(?<=[.!?])\s+", summary)
+    snippets = [name]
+    snippets.extend(
+        sentence.strip() for sentence in summary_sentences[:2] if sentence.strip()
+    )
+    signature = " | ".join(snippets)
+    if len(signature) > 280:
+        signature = signature[:277].rstrip() + "..."
+    return signature
+
+
+def get_clustering_kwargs(clustering_config):
+    method = clustering_config.get("method", "hdbscan")
+    if method == "hdbscan":
+        return method, {
+            "min_cluster_size": clustering_config.get("min_cluster_size", 2),
+            "min_samples": clustering_config.get("hdbscan_min_samples", 1),
+        }
+    elif method == "louvain":
+        return method, {
+            "threshold": clustering_config.get("similarity_threshold", 0.5),
+            "resolution": clustering_config.get("resolution", 1.0),
+        }
+    return method, {
+        "eps": clustering_config.get("eps", 0.3),
+        "min_samples": clustering_config.get("min_samples", 2),
+    }
+
+
+def refine_embedding_clusters(clusters_indices, embeddings, clustering_config):
+    from cluster import cluster_embeddings
+
+    max_cluster_size = clustering_config.get("max_cluster_size", 24)
+    if max_cluster_size < 2:
+        return clusters_indices
+
+    refined_clusters = []
+    method, _ = get_clustering_kwargs(clustering_config)
+
+    for cluster in clusters_indices:
+        if len(cluster) <= max_cluster_size:
+            refined_clusters.append(cluster)
+            continue
+
+        logging.info(
+            f"Refining oversized embedding cluster of size {len(cluster)} with max_cluster_size={max_cluster_size}"
+        )
+        sub_embeddings = embeddings[cluster]
+
+        if method == "hdbscan":
+            refined_method = "louvain"
+            refined_kwargs = {
+                "threshold": clustering_config.get("refine_similarity_threshold", 0.72),
+                "resolution": clustering_config.get("refine_resolution", 1.25),
+            }
+        elif method == "louvain":
+            refined_method = "louvain"
+            refined_kwargs = {
+                "threshold": clustering_config.get("refine_similarity_threshold", 0.75),
+                "resolution": clustering_config.get("refine_resolution", 1.35),
+            }
+        else:
+            refined_method = "dbscan"
+            refined_kwargs = {
+                "eps": clustering_config.get("refine_eps", 0.22),
+                "min_samples": clustering_config.get("refine_min_samples", 2),
+            }
+
+        subclusters = cluster_embeddings(
+            sub_embeddings, method=refined_method, **refined_kwargs
+        )
+        if not subclusters or len(subclusters) <= 1:
+            logging.info(
+                "Oversized cluster refinement did not produce useful subclusters; keeping original cluster"
+            )
+            refined_clusters.append(cluster)
+            continue
+
+        used_local_indices = set()
+        for subcluster in subclusters:
+            mapped_cluster = [cluster[idx] for idx in subcluster]
+            refined_clusters.append(mapped_cluster)
+            used_local_indices.update(subcluster)
+
+        for local_idx, global_idx in enumerate(cluster):
+            if local_idx not in used_local_indices:
+                refined_clusters.append([global_idx])
+
+    return refined_clusters
+
+
+def should_merge_similarity_group(
+    cluster_themes,
+    candidate_indices,
+    group,
+    embedding_similarity_matrix,
+    cohesion_config=None,
+):
+    if len(candidate_indices) <= 1:
+        return False
+
+    if len(candidate_indices) == 2:
+        return True
+
+    if cohesion_config is None:
+        cohesion_config = {}
+
+    local_indices = [idx - 1 for idx in candidate_indices]
+    pairwise_similarities = []
+    for i in range(len(local_indices)):
+        for j in range(i + 1, len(local_indices)):
+            similarity = float(
+                embedding_similarity_matrix[local_indices[i], local_indices[j]]
+            )
+            pairwise_similarities.append(similarity)
+
+    if not pairwise_similarities:
+        return False
+
+    min_pairwise_similarity = min(pairwise_similarities)
+    avg_pairwise_similarity = sum(pairwise_similarities) / len(pairwise_similarities)
+
+    # Configurable thresholds with permissive defaults.
+    # Embedding models score topically identical themes at 0.3-0.6 when framing
+    # language differs, so thresholds must be low enough to allow legitimate merges.
+    high_rating_min = cohesion_config.get("high_rating_min", 0.30)
+    high_rating_avg = cohesion_config.get("high_rating_avg", 0.40)
+    low_rating_min = cohesion_config.get("low_rating_min", 0.40)
+    low_rating_avg = cohesion_config.get("low_rating_avg", 0.50)
+
+    minimum_required = (
+        high_rating_min if group.similarity_rating >= 5 else low_rating_min
+    )
+    average_required = (
+        high_rating_avg if group.similarity_rating >= 5 else low_rating_avg
+    )
+
+    if (
+        min_pairwise_similarity < minimum_required
+        or avg_pairwise_similarity < average_required
+    ):
+        theme_names = [
+            capitalize_theme_name(cluster_themes[idx - 1].name)
+            for idx in candidate_indices
+        ]
+        logging.info(
+            "Rejecting similarity group %s due to weak pairwise cohesion: min=%.3f (req %.2f) avg=%.3f (req %.2f) themes=%s",
+            candidate_indices,
+            min_pairwise_similarity,
+            minimum_required,
+            avg_pairwise_similarity,
+            average_required,
+            theme_names,
+        )
+        return False
+
+    return True
+
+
+def embedding_cluster_and_merge(
+    themes_list, group_config, similarity_prompt_template, merging_prompt_template, llm
+):
     """
     First cluster the themes using embeddings and DBSCAN, then run the standard
-    similarity-based merging on each cluster.
+    similarity-based merging on each cluster, then optionally run a cross-cluster
+    merge pass to catch duplicates that were separated into different clusters.
     """
     from cluster import cluster_themes_with_embeddings
 
@@ -383,35 +604,28 @@ def embedding_cluster_and_merge(themes_list, group_config, similarity_prompt_tem
     # Perform embedding-based clustering
     clustering_config = group_config.get("embedding_clustering", {})
     model_name = clustering_config.get("model", "mxbai-embed-large")
-    method = clustering_config.get("method", "hdbscan")
-
-    # Get method-specific parameters
-    if method == "hdbscan":
-        kwargs = {
-            "min_cluster_size": clustering_config.get("min_cluster_size", 2),
-            "min_samples": clustering_config.get("hdbscan_min_samples", 1)
-        }
-    elif method == "louvain":
-        kwargs = {
-            "threshold": clustering_config.get("similarity_threshold", 0.5),
-            "resolution": clustering_config.get("resolution", 1.0)
-        }
-    else:  # dbscan
-        kwargs = {
-            "eps": clustering_config.get("eps", 0.3),
-            "min_samples": clustering_config.get("min_samples", 2)
-        }
+    method, kwargs = get_clustering_kwargs(clustering_config)
 
     logging.info(f"Clustering themes using {method} with params: {kwargs}")
 
-    clusters_indices = cluster_themes_with_embeddings(
-        themes=[f"{theme.name}: {theme.summary}" for theme in all_themes],
+    embedding_texts = [build_theme_embedding_text(theme) for theme in all_themes]
+    clusters_indices, embeddings = cluster_themes_with_embeddings(
+        themes=embedding_texts,
         model_name=model_name,
         method=method,
-        **kwargs
+        return_embeddings=True,
+        **kwargs,
+    )
+    clusters_indices = refine_embedding_clusters(
+        clusters_indices, embeddings, clustering_config
     )
     logging.info(f"Embeddings returned these clusters: {clusters_indices}")
 
+    embedding_similarity_matrix = None
+    if len(embeddings) > 1:
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        embedding_similarity_matrix = cosine_similarity(embeddings)
 
     final_themes = []
     for cluster in clusters_indices:
@@ -423,7 +637,9 @@ def embedding_cluster_and_merge(themes_list, group_config, similarity_prompt_tem
             similarity_prompt_template,
             merging_prompt_template,
             llm,
-            group_config
+            group_config,
+            cluster_indices=cluster,
+            embedding_similarity_matrix=embedding_similarity_matrix,
         )
         final_themes.extend(merged_cluster_themes)
 
@@ -438,10 +654,127 @@ def embedding_cluster_and_merge(themes_list, group_config, similarity_prompt_tem
             # This is presumably noise or unclustered
             final_themes.append(theme)
 
+    # --- Cross-cluster merge pass ---
+    if clustering_config.get("cross_cluster_merge", False) and len(final_themes) > 1:
+        final_themes = cross_cluster_merge(
+            final_themes,
+            clustering_config,
+            group_config,
+            similarity_prompt_template,
+            merging_prompt_template,
+            llm,
+        )
+
     # Return them as a single ConversationThemes object
     return ConversationThemes(themes=final_themes)
 
-def process_theme_batch_with_llm(cluster_themes, similarity_prompt_template, merging_prompt_template, llm, group_config):
+
+def cross_cluster_merge(
+    themes,
+    clustering_config,
+    group_config,
+    similarity_prompt_template,
+    merging_prompt_template,
+    llm,
+):
+    """
+    Re-embed all post-merge themes, cluster them with looser settings, and
+    run one more similarity + merge pass to catch cross-cluster duplicates.
+    Runs up to max_passes iterations until the theme count stabilises.
+    """
+    from cluster import cluster_themes_with_embeddings
+
+    max_passes = clustering_config.get("cross_cluster_max_passes", 2)
+    model_name = clustering_config.get("model", "mxbai-embed-large")
+
+    # Use Louvain with a low threshold to be permissive in finding potential dupes
+    cross_threshold = clustering_config.get("cross_cluster_threshold", 0.45)
+    cross_resolution = clustering_config.get("cross_cluster_resolution", 1.0)
+
+    for pass_num in range(1, max_passes + 1):
+        before_count = len(themes)
+        logging.info(
+            "Cross-cluster merge pass %d: %d themes, threshold=%.2f, resolution=%.2f",
+            pass_num,
+            before_count,
+            cross_threshold,
+            cross_resolution,
+        )
+
+        # Re-embed the current themes
+        embedding_texts = [build_theme_embedding_text(t) for t in themes]
+        clusters_indices, embeddings = cluster_themes_with_embeddings(
+            themes=embedding_texts,
+            model_name=model_name,
+            method="louvain",
+            return_embeddings=True,
+            threshold=cross_threshold,
+            resolution=cross_resolution,
+        )
+
+        if not clusters_indices:
+            logging.info("Cross-cluster merge: no clusters found, stopping.")
+            break
+
+        from sklearn.metrics.pairwise import cosine_similarity as cos_sim
+
+        embedding_similarity_matrix = cos_sim(embeddings)
+
+        merged_themes = []
+        used_indices = set()
+
+        for cluster in clusters_indices:
+            if len(cluster) <= 1:
+                # Single-theme cluster, keep as-is
+                for idx in cluster:
+                    merged_themes.append(themes[idx])
+                    used_indices.add(idx)
+                continue
+
+            cluster_themes_list = [themes[idx] for idx in cluster]
+            merged_cluster = process_theme_batch_with_llm(
+                cluster_themes_list,
+                similarity_prompt_template,
+                merging_prompt_template,
+                llm,
+                group_config,
+                cluster_indices=cluster,
+                embedding_similarity_matrix=embedding_similarity_matrix,
+            )
+            merged_themes.extend(merged_cluster)
+            used_indices.update(cluster)
+
+        # Add any unclustered themes
+        for idx, theme in enumerate(themes):
+            if idx not in used_indices:
+                merged_themes.append(theme)
+
+        after_count = len(merged_themes)
+        logging.info(
+            "Cross-cluster merge pass %d: %d -> %d themes",
+            pass_num,
+            before_count,
+            after_count,
+        )
+
+        themes = merged_themes
+
+        if after_count >= before_count:
+            logging.info("Cross-cluster merge: no reduction, stopping.")
+            break
+
+    return themes
+
+
+def process_theme_batch_with_llm(
+    cluster_themes,
+    similarity_prompt_template,
+    merging_prompt_template,
+    llm,
+    group_config,
+    cluster_indices=None,
+    embedding_similarity_matrix=None,
+):
     """
     Runs the typical similarity_prompt-based merges on a single cluster of themes.
     Note: This is basically a streamlined version of the batch merging used in the
@@ -454,7 +787,7 @@ def process_theme_batch_with_llm(cluster_themes, similarity_prompt_template, mer
     numbered_themes = [(idx + 1, t) for idx, t in enumerate(cluster_themes)]
     themes_text = ""
     for idx, theme in numbered_themes:
-        themes_text += f"{idx}. {capitalize_theme_name(theme.name)}\nSummary: {theme.summary}\n"
+        themes_text += f"{idx}. {capitalize_theme_name(theme.name)}\nSignature: {build_theme_pair_signature(theme)}\nSummary: {theme.summary}\n"
         if theme.dissenting_opinions:
             themes_text += f"Dissenting opinions: {theme.dissenting_opinions}\n"
         themes_text += "\n"
@@ -464,7 +797,7 @@ def process_theme_batch_with_llm(cluster_themes, similarity_prompt_template, mer
         similarity_groups = llm.generate_structured_output(
             prompt_template=similarity_prompt_template,
             context=themes_text,
-            pydantic_class=SimilarityGroups
+            pydantic_class=SimilarityGroups,
         )
         logging.debug(f"Similarity groups for cluster: {similarity_groups.groups}")
     except Exception as e:
@@ -473,25 +806,37 @@ def process_theme_batch_with_llm(cluster_themes, similarity_prompt_template, mer
 
     # 3. Merge themes based on similarity groups
     merged_cluster_themes, _ = merge_themes_in_cluster(
-        cluster_themes, similarity_groups, group_config, llm, merging_prompt_template
+        cluster_themes,
+        similarity_groups,
+        group_config,
+        llm,
+        merging_prompt_template,
+        cluster_indices=cluster_indices,
+        embedding_similarity_matrix=embedding_similarity_matrix,
     )
     return merged_cluster_themes
+
 
 def merge_themes_in_cluster(
     cluster_themes: List[ConversationTheme],
     similarity_groups: SimilarityGroups,
     group_config,
     llm,
-    merging_prompt_template: str
+    merging_prompt_template: str,
+    cluster_indices=None,
+    embedding_similarity_matrix=None,
 ):
-    similarity_threshold = group_config["themes_recombination"].get("similarity_threshold", 4)
+    similarity_threshold = group_config["themes_recombination"].get(
+        "similarity_threshold", 4
+    )
+    cohesion_config = group_config.get("embedding_clustering", {}).get("cohesion", {})
     batch_changed = False
     processed_indices = set()
     merged_themes = []
 
     # For convenience, keep them 1-based
     for group in similarity_groups.groups:
-        indices = group.theme_numbers
+        indices = sorted(set(group.theme_numbers))
         if any(idx in processed_indices for idx in indices):
             continue
 
@@ -503,9 +848,24 @@ def merge_themes_in_cluster(
         # If there's only one theme or similarity rating is below threshold, do not merge
         if (len(indices) <= 1) or (group.similarity_rating < similarity_threshold):
             continue
+
+        if (
+            embedding_similarity_matrix is not None
+            and not should_merge_similarity_group(
+                cluster_themes,
+                indices,
+                group,
+                embedding_similarity_matrix,
+                cohesion_config=cohesion_config,
+            )
+        ):
+            continue
+
         # Merge these themes
         themes_to_merge = [cluster_themes[idx - 1] for idx in indices]
-        merged_theme = merge_themes_with_prompt(themes_to_merge, llm, merging_prompt_template)
+        merged_theme = merge_themes_with_prompt(
+            themes_to_merge, llm, merging_prompt_template
+        )
         merged_themes.append(merged_theme)
         processed_indices.update(indices)
         batch_changed = True
@@ -517,7 +877,10 @@ def merge_themes_in_cluster(
 
     return merged_themes, batch_changed
 
-def merge_themes_with_prompt(themes_to_merge: List[ConversationTheme], llm, merging_prompt_template: str) -> ConversationTheme:
+
+def merge_themes_with_prompt(
+    themes_to_merge: List[ConversationTheme], llm, merging_prompt_template: str
+) -> ConversationTheme:
     # Prepare the context for merging
     themes_text = ""
     for theme in themes_to_merge:
@@ -531,7 +894,7 @@ def merge_themes_with_prompt(themes_to_merge: List[ConversationTheme], llm, merg
         merged_theme = llm.generate_structured_output(
             prompt_template=merging_prompt_template,
             context=themes_text,
-            pydantic_class=ConversationTheme
+            pydantic_class=ConversationTheme,
         )
         logging.debug(f"Merged theme: {merged_theme}")
         return merged_theme
@@ -539,13 +902,22 @@ def merge_themes_with_prompt(themes_to_merge: List[ConversationTheme], llm, merg
         logging.error(f"Failed to merge themes: {e}")
         # If merging fails, fallback to a naive concatenation
         merged_name = " / ".join([theme.name for theme in themes_to_merge])
-        merged_summary = "\n".join([f"{theme.name}: {theme.summary}" for theme in themes_to_merge])
-        merged_dissenting_opinions = "\n".join([theme.dissenting_opinions for theme in themes_to_merge if theme.dissenting_opinions])
+        merged_summary = "\n".join(
+            [f"{theme.name}: {theme.summary}" for theme in themes_to_merge]
+        )
+        merged_dissenting_opinions = "\n".join(
+            [
+                theme.dissenting_opinions
+                for theme in themes_to_merge
+                if theme.dissenting_opinions
+            ]
+        )
         return ConversationTheme(
             name=merged_name,
             summary=merged_summary,
-            dissenting_opinions=merged_dissenting_opinions
+            dissenting_opinions=merged_dissenting_opinions,
         )
+
 
 def recombine_themes(themes_list, group_config, llm):
     """
@@ -555,39 +927,42 @@ def recombine_themes(themes_list, group_config, llm):
     (if you want more merges across clusters, you can do that, but by default,
     we only do merges within each cluster).
     """
-    recombination_config = group_config.get('themes_recombination', {})
-    similarity_prompt_template = recombination_config.get('similarity_prompt', '')
-    merging_prompt_template = recombination_config.get('merging_prompt', '')
+    recombination_config = group_config.get("themes_recombination", {})
+    similarity_prompt_template = recombination_config.get("similarity_prompt", "")
+    merging_prompt_template = recombination_config.get("merging_prompt", "")
 
-    embedding_clustering_config = group_config.get('embedding_clustering', {})
-    if embedding_clustering_config.get('enabled', False):
+    embedding_clustering_config = group_config.get("embedding_clustering", {})
+    if embedding_clustering_config.get("enabled", False):
         # Use the embedding-based approach
-        logging.info('Using embeddings-based clustering and merging')
+        logging.info("Using embeddings-based clustering and merging")
         final_themes = embedding_cluster_and_merge(
             themes_list,
             group_config,
             similarity_prompt_template,
             merging_prompt_template,
-            llm
+            llm,
         )
         return final_themes
     else:
         # Fall back to the original iterative merging approach
-        logging.info('Using iterative clustering and merging approach')
+        logging.info("Using iterative clustering and merging approach")
         return iterative_recombine_themes(themes_list, group_config, llm)
+
 
 def iterative_recombine_themes(themes_list, group_config, llm):
     """
     The older iterative approach using random batch merges with the similarity prompt
     until no further merges occur or max iterations are reached.
     """
-    recombination_config = group_config.get('themes_recombination', {})
-    batch_size = recombination_config.get('batch_size', 5)
-    configured_max_iterations = recombination_config.get('max_iterations', 30)
-    configured_convergence_threshold = recombination_config.get('convergence_threshold', 3)
-    similarity_threshold = recombination_config.get('similarity_threshold', 4)
-    similarity_prompt_template = recombination_config.get('similarity_prompt', '')
-    merging_prompt_template = recombination_config.get('merging_prompt', '')
+    recombination_config = group_config.get("themes_recombination", {})
+    batch_size = recombination_config.get("batch_size", 5)
+    configured_max_iterations = recombination_config.get("max_iterations", 30)
+    configured_convergence_threshold = recombination_config.get(
+        "convergence_threshold", 3
+    )
+    similarity_threshold = recombination_config.get("similarity_threshold", 4)
+    similarity_prompt_template = recombination_config.get("similarity_prompt", "")
+    merging_prompt_template = recombination_config.get("merging_prompt", "")
 
     # Collect all themes from the chunks
     all_themes = []
@@ -614,7 +989,9 @@ def iterative_recombine_themes(themes_list, group_config, llm):
 
     # Calculate convergence_threshold
     calculated_convergence_threshold = max(1, int(max_iterations / 10))
-    convergence_threshold = min(configured_convergence_threshold, calculated_convergence_threshold)
+    convergence_threshold = min(
+        configured_convergence_threshold, calculated_convergence_threshold
+    )
 
     logging.debug(f"Calculated max_iterations: {max_iterations}")
     logging.debug(f"Calculated convergence_threshold: {convergence_threshold}")
@@ -625,13 +1002,18 @@ def iterative_recombine_themes(themes_list, group_config, llm):
 
     while iteration < max_iterations:
         iteration += 1
-        logging.debug(f"Recombination iteration {iteration} with {len(all_themes)} themes")
+        logging.debug(
+            f"Recombination iteration {iteration} with {len(all_themes)} themes"
+        )
 
         # Randomly shuffle themes to maximize pairing chances
         random.shuffle(all_themes)
 
         # Split themes into batches
-        batches = [all_themes[i:i + batch_size] for i in range(0, len(all_themes), batch_size)]
+        batches = [
+            all_themes[i : i + batch_size]
+            for i in range(0, len(all_themes), batch_size)
+        ]
         new_all_themes = []
         for batch in batches:
             merged_batch, _ = process_theme_batch(
@@ -640,19 +1022,23 @@ def iterative_recombine_themes(themes_list, group_config, llm):
                 llm,
                 similarity_prompt_template,
                 merging_prompt_template,
-                similarity_threshold
+                similarity_threshold,
             )
             new_all_themes.extend(merged_batch)
 
         current_theme_count = len(new_all_themes)
         if current_theme_count == previous_theme_count:
             convergence_counter += 1
-            logging.debug(f"No reduction in theme count. Convergence counter: {convergence_counter}")
+            logging.debug(
+                f"No reduction in theme count. Convergence counter: {convergence_counter}"
+            )
         else:
             convergence_counter = 0  # Reset counter if reduction occurs
 
         if convergence_counter >= convergence_threshold:
-            logging.debug("No reduction in theme count over multiple iterations. Terminating recombination.")
+            logging.debug(
+                "No reduction in theme count over multiple iterations. Terminating recombination."
+            )
             break
 
         all_themes = new_all_themes
@@ -662,19 +1048,29 @@ def iterative_recombine_themes(themes_list, group_config, llm):
     final_themes = ConversationThemes(themes=all_themes)
     return final_themes
 
-def process_theme_batch(themes_batch: List[ConversationTheme], group_config, llm,
-                        similarity_prompt_template: str, merging_prompt_template: str,
-                        similarity_threshold: float):
+
+def process_theme_batch(
+    themes_batch: List[ConversationTheme],
+    group_config,
+    llm,
+    similarity_prompt_template: str,
+    merging_prompt_template: str,
+    similarity_threshold: float,
+):
     batch_changed = False  # Flag to indicate if any merges occurred in this batch
 
-    if len(themes_batch) == 1:   # If there is only one theme in this batch, return it as-is
+    if (
+        len(themes_batch) == 1
+    ):  # If there is only one theme in this batch, return it as-is
         return themes_batch, False
 
     # Number the themes starting from 1
     numbered_themes = [(idx + 1, theme) for idx, theme in enumerate(themes_batch)]
     themes_text = ""
     for idx, theme in numbered_themes:
-        themes_text += f"{idx}. {capitalize_theme_name(theme.name)}\nSummary: {theme.summary}\n"
+        themes_text += (
+            f"{idx}. {capitalize_theme_name(theme.name)}\nSummary: {theme.summary}\n"
+        )
         if theme.dissenting_opinions:
             themes_text += f"Dissenting opinions: {theme.dissenting_opinions}\n"
         themes_text += "\n"
@@ -684,7 +1080,7 @@ def process_theme_batch(themes_batch: List[ConversationTheme], group_config, llm
         similarity_groups = llm.generate_structured_output(
             prompt_template=similarity_prompt_template,
             context=themes_text,
-            pydantic_class=SimilarityGroups
+            pydantic_class=SimilarityGroups,
         )
         logging.debug(f"Similarity groups: {similarity_groups.groups}")
     except Exception as e:
@@ -711,7 +1107,9 @@ def process_theme_batch(themes_batch: List[ConversationTheme], group_config, llm
                         processed_indices.add(idx)
                 continue
             themes_to_merge = [themes_batch[idx - 1] for idx in indices]
-            merged_theme = merge_themes_with_prompt(themes_to_merge, llm, merging_prompt_template)
+            merged_theme = merge_themes_with_prompt(
+                themes_to_merge, llm, merging_prompt_template
+            )
             merged_themes.append(merged_theme)
             processed_indices.update(indices)
             batch_changed = True  # A merge occurred
@@ -723,15 +1121,20 @@ def process_theme_batch(themes_batch: List[ConversationTheme], group_config, llm
 
     return merged_themes, batch_changed
 
+
 def build_summary_from_themes(themes, group_config, database, group_id, since, until):
     if not themes or not themes.themes:
         return "No significant themes were discussed."
 
     summary_lines = []
     for idx, theme in enumerate(themes.themes, 1):
-        summary_lines.append(f"## **{capitalize_theme_name(theme.name)}**\n{theme.summary}")
+        summary_lines.append(
+            f"## **{capitalize_theme_name(theme.name)}**\n{theme.summary}"
+        )
         if theme.dissenting_opinions:
-            summary_lines.append(f"\n**Dissenting opinions:** {theme.dissenting_opinions}")
+            summary_lines.append(
+                f"\n**Dissenting opinions:** {theme.dissenting_opinions}"
+            )
 
     # Add links section
     links_section = build_links_section(
@@ -739,7 +1142,7 @@ def build_summary_from_themes(themes, group_config, database, group_id, since, u
         group_config=group_config,
         group_id=group_id,
         since=since,
-        until=until
+        until=until,
     )
     if links_section:
         summary_lines.append(links_section)
@@ -747,99 +1150,124 @@ def build_summary_from_themes(themes, group_config, database, group_id, since, u
     final_summary = "\n\n".join(summary_lines)
     return final_summary
 
+
 def get_current_date_formatted():
     now = datetime.datetime.now()
     day = now.day
-    suffix = 'th' if 11 <= day <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
-    current_date = now.strftime(f'%A, %B {day}{suffix} %Y')
+    suffix = (
+        "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    )
+    current_date = now.strftime(f"%A, %B {day}{suffix} %Y")
     return current_date
 
-def summarize_group(config, args, group_id, llm_dict, vision_util, stt_model, resume_data, resume_file):
+
+def summarize_group(
+    config, args, group_id, llm_dict, vision_util, stt_model, resume_data, resume_file
+):
     group_config = get_group_config(config, group_id)
-    group_config['group_id'] = group_id  # Ensure group_id is in the group_config
-    attachment_root = Path(group_config.get('attachment_root', './'))
+    group_config["group_id"] = group_id  # Ensure group_id is in the group_config
+    attachment_root = Path(group_config.get("attachment_root", "./"))
 
     if args.output:
         output_file = args.output
     else:
-        output_file = group_config.get('output_file', 'summary.md')
+        output_file = group_config.get("output_file", "summary.md")
 
-    output_file_orig = group_config.get('output_file_orig', 'summary_orig.md')
+    output_file_orig = group_config.get("output_file_orig", "summary_orig.md")
 
-    database = group_config.get('database', 'messages.db')
+    database = group_config.get("database", "messages.db")
 
     # Determine date range
     since, until = get_date_range(args)
 
     # Load group resume data
-    group_resume_data = resume_data.get('groups', {}).get(group_id, {})
-    if 'groups' not in resume_data:
-        resume_data['groups'] = {}
-    resume_data['groups'][group_id] = group_resume_data
+    group_resume_data = resume_data.get("groups", {}).get(group_id, {})
+    if "groups" not in resume_data:
+        resume_data["groups"] = {}
+    resume_data["groups"][group_id] = group_resume_data
 
     # Fetch messages
-    if 'messages' in group_resume_data and not args.redo_themes:
-        messages = group_resume_data['messages']
+    if "messages" in group_resume_data and not args.redo_themes:
+        messages = group_resume_data["messages"]
         logging.info(f"Loaded messages from resume data for group {group_id}")
     else:
         messages = fetch_messages(database, group_id, since, until)
-        group_resume_data['messages'] = messages
+        group_resume_data["messages"] = messages
         if resume_file:
             save_resume_file(resume_file, resume_data)
 
     if not messages:
         print(f"No messages found for group {group_id} in the specified date range.")
         # Remove group from resume data if present
-        if group_id in resume_data.get('groups', {}):
-            del resume_data['groups'][group_id]
+        if group_id in resume_data.get("groups", {}):
+            del resume_data["groups"][group_id]
             if resume_file:  # Only save if resume file is provided
                 save_resume_file(resume_file, resume_data)
         return
 
     # Process attachments (images and audio)
-    if group_resume_data.get('attachments_processed'):
+    if group_resume_data.get("attachments_processed"):
         logging.info(f"Attachments already processed for group {group_id}")
     else:
-        process_attachments(messages, group_config, args.regenerate_attachment_descriptions, database, attachment_root, vision_util, stt_model)
-        group_resume_data['attachments_processed'] = True
+        process_attachments(
+            messages,
+            group_config,
+            args.regenerate_attachment_descriptions,
+            database,
+            attachment_root,
+            vision_util,
+            stt_model,
+        )
+        group_resume_data["attachments_processed"] = True
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Build prompts for summarization
-    if 'conversation_chunks' in group_resume_data and not args.redo_themes:
-        conversation_chunks = group_resume_data['conversation_chunks']
-        logging.info(f"Loaded conversation chunks from resume data for group {group_id}")
+    if "conversation_chunks" in group_resume_data and not args.redo_themes:
+        conversation_chunks = group_resume_data["conversation_chunks"]
+        logging.info(
+            f"Loaded conversation chunks from resume data for group {group_id}"
+        )
     else:
-        conversation_chunks = build_conversation_chunks(messages, group_config, llm_dict)
-        group_resume_data['conversation_chunks'] = conversation_chunks
+        conversation_chunks = build_conversation_chunks(
+            messages, group_config, llm_dict
+        )
+        group_resume_data["conversation_chunks"] = conversation_chunks
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Initialize LLMs for themes, recombination, translation
-    themes_model_name = group_config.get('themes', {}).get('model')
+    themes_model_name = group_config.get("themes", {}).get("model")
     themes_llm = llm_dict.get(themes_model_name)
 
-    recombination_model_name = group_config.get('themes_recombination', {}).get('model')
+    recombination_model_name = group_config.get("themes_recombination", {}).get("model")
     recombination_llm = llm_dict.get(recombination_model_name)
 
-    translation_model_name = group_config.get('translation', {}).get('model')
+    translation_model_name = group_config.get("translation", {}).get("model")
     translation_llm = llm_dict.get(translation_model_name)
 
-    link_summarizer_model_name = group_config.get('link_summarizer', {}).get('model')
+    link_summarizer_model_name = group_config.get("link_summarizer", {}).get("model")
     link_summarizer_llm = llm_dict.get(link_summarizer_model_name)
 
     # Process links
-    if group_resume_data.get('links_processed') and not args.redo_links:
+    if group_resume_data.get("links_processed") and not args.redo_links:
         logging.info(f"Links already processed for group {group_id}")
     else:
-        process_links(messages, group_config, args.regenerate_link_summaries, database, group_id, link_summarizer_llm)
-        group_resume_data['links_processed'] = True
+        process_links(
+            messages,
+            group_config,
+            args.regenerate_link_summaries,
+            database,
+            group_id,
+            link_summarizer_llm,
+        )
+        group_resume_data["links_processed"] = True
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Generate summaries (themes) per chunk
-    if 'themes' in group_resume_data and not args.redo_themes:
-        summaries_dicts = group_resume_data['themes']
+    if "themes" in group_resume_data and not args.redo_themes:
+        summaries_dicts = group_resume_data["themes"]
         summaries = [ConversationThemes(**theme_dict) for theme_dict in summaries_dicts]
         logging.info(f"Loaded themes from resume data for group {group_id}")
     else:
@@ -850,49 +1278,57 @@ def summarize_group(config, args, group_id, llm_dict, vision_util, stt_model, re
                 summaries.append(themes)
         # Convert to serializable format
         summaries_dicts = [t.dict() for t in summaries]
-        group_resume_data['themes'] = summaries_dicts
+        group_resume_data["themes"] = summaries_dicts
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Recombine summaries
-    if 'final_themes' in group_resume_data and not args.redo_merging:
-        final_themes_dict = group_resume_data['final_themes']
+    if "final_themes" in group_resume_data and not args.redo_merging:
+        final_themes_dict = group_resume_data["final_themes"]
         final_themes = ConversationThemes(**final_themes_dict)
         logging.info(f"Loaded final themes from resume data for group {group_id}")
     else:
         final_themes = recombine_themes(summaries, group_config, recombination_llm)
         # Convert to serializable format
         final_themes_dict = final_themes.dict() if final_themes else {}
-        group_resume_data['final_themes'] = final_themes_dict
+        group_resume_data["final_themes"] = final_themes_dict
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Build final summary from themes
-    if 'final_summary' in group_resume_data and not args.redo_merging:
-        final_summary = group_resume_data['final_summary']
+    if "final_summary" in group_resume_data and not args.redo_merging:
+        final_summary = group_resume_data["final_summary"]
         logging.info(f"Loaded final summary from resume data for group {group_id}")
     else:
-        final_summary = build_summary_from_themes(final_themes, group_config, database, group_id, since, until)
-        group_resume_data['final_summary'] = final_summary
+        final_summary = build_summary_from_themes(
+            final_themes, group_config, database, group_id, since, until
+        )
+        group_resume_data["final_summary"] = final_summary
         if resume_file:  # Only save if resume file is provided
             save_resume_file(resume_file, resume_data)
 
     # Write the pre-translation summary to output_file_orig
-    with open(output_file_orig, 'w', encoding='utf-8') as f:
+    with open(output_file_orig, "w", encoding="utf-8") as f:
         f.write(final_summary)
 
     # Translate the final summary if the desired language is not English
-    target_language = group_config.get('language', 'English')
-    if target_language.lower() != 'english':
+    target_language = group_config.get("language", "English")
+    if target_language.lower() != "english":
         try:
-            translation_prompt = group_config.get('translation', {}).get('prompt', '')
-            max_chunk_size = group_config.get('translation', {}).get('max_chunk_size', 2000)
-            if 'translated_summary' in group_resume_data:
-                translated_summary = group_resume_data['translated_summary']
-                logging.info(f"Loaded translated summary from resume data for group {group_id}")
+            translation_prompt = group_config.get("translation", {}).get("prompt", "")
+            max_chunk_size = group_config.get("translation", {}).get(
+                "max_chunk_size", 2000
+            )
+            if "translated_summary" in group_resume_data:
+                translated_summary = group_resume_data["translated_summary"]
+                logging.info(
+                    f"Loaded translated summary from resume data for group {group_id}"
+                )
             else:
-                translated_summary = translation_llm.translate_text(final_summary, target_language, translation_prompt, max_chunk_size)
-                group_resume_data['translated_summary'] = translated_summary
+                translated_summary = translation_llm.translate_text(
+                    final_summary, target_language, translation_prompt, max_chunk_size
+                )
+                group_resume_data["translated_summary"] = translated_summary
                 if resume_file:  # Only save if resume file is provided
                     save_resume_file(resume_file, resume_data)
             final_summary = translated_summary
@@ -904,17 +1340,20 @@ def summarize_group(config, args, group_id, llm_dict, vision_util, stt_model, re
         logging.info("Translation not required as target language is English.")
 
     # Write final summary to output file
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(final_summary)
 
     print(f"Summary for group {group_id} written to {output_file}")
 
     # Remove group data from resume_data and save
-    if 'groups' in resume_data:
-        if group_id in resume_data['groups']:
-            del resume_data['groups'][group_id]
+    if "groups" in resume_data:
+        if group_id in resume_data["groups"]:
+            del resume_data["groups"][group_id]
             if resume_file:  # Only save if resume file is provided
                 save_resume_file(resume_file, resume_data)
 
+
 def capitalize_theme_name(name):
-    return name[0].upper() + name[1:] # not using .capitalize() because we don't want to touch capitalization of other letters
+    return (
+        name[0].upper() + name[1:]
+    )  # not using .capitalize() because we don't want to touch capitalization of other letters
