@@ -1,7 +1,7 @@
 # File: llm_util.py
 
 import logging
-from typing import List, Optional, Type, Any
+from typing import List, Literal, Optional, Type, Any, Union
 
 from langchain.output_parsers import OutputFixingParser, PydanticOutputParser
 from langchain.prompts import PromptTemplate
@@ -13,21 +13,52 @@ import time
 class LinkSummary(BaseModel):
     title: Optional[str] = Field(description="The title of the webpage")
     summary: Optional[str] = Field(description="A concise summary of the webpage")
-    error: Optional[str] = Field(description="Error message if any occurred during summarization")
+    error: Optional[str] = Field(
+        description="Error message if any occurred during summarization"
+    )
 
 
 class ConversationTheme(BaseModel):
     name: str = Field(description="Name of the theme")
     summary: str = Field(description="Summary of the discussion on this theme")
-    dissenting_opinions: Optional[str] = Field(description="Optional dissenting opinions on the topic")
+    dissenting_opinions: Optional[str] = Field(
+        description="Optional dissenting opinions on the topic"
+    )
 
 
 class ConversationThemes(BaseModel):
     themes: List[ConversationTheme] = Field(description="List of themes discussed")
 
 
+class ThemeAction(BaseModel):
+    action: str = Field(
+        description="Either 'update' to update an existing theme, or 'new' to create a new theme"
+    )
+    theme_id: Optional[int] = Field(
+        default=None,
+        description="The number of the existing theme to update (required when action is 'update')",
+    )
+    name: str = Field(
+        description="Theme name (updated name for 'update', new name for 'new')"
+    )
+    summary: str = Field(
+        description="Theme summary (updated summary for 'update', new summary for 'new')"
+    )
+    dissenting_opinions: Optional[str] = Field(
+        default="", description="Optional dissenting opinions on the topic"
+    )
+
+
+class ThemeActions(BaseModel):
+    themes: List[ThemeAction] = Field(
+        description="List of theme actions (updates and new themes)"
+    )
+
+
 class SimilarityGroup(BaseModel):
-    theme_numbers: List[int] = Field(description="List of theme numbers that are similar")
+    theme_numbers: List[int] = Field(
+        description="List of theme numbers that are similar"
+    )
     similarity_rating: float = Field(description="Similarity rating for the group")
 
 
@@ -38,28 +69,31 @@ class SimilarityGroups(BaseModel):
 class LLMUtil:
     def __init__(self, model_config):
         self.model_config = model_config
-        self.provider = model_config.get('provider', 'ollama')
-        self.logger = logging.getLogger('llm_util')
+        self.provider = model_config.get("provider", "ollama")
+        self.logger = logging.getLogger("llm_util")
 
-        if self.provider == 'ollama':
+        if self.provider == "ollama":
             from langchain_ollama import ChatOllama
+
             self.llm = ChatOllama(
-                base_url=model_config.get('endpoint', 'http://localhost:11434'),
-                model=model_config['model']
+                base_url=model_config.get("endpoint", "http://localhost:11434"),
+                model=model_config["model"],
             )
-        elif self.provider == 'openai':
+        elif self.provider == "openai":
             from langchain_openai import ChatOpenAI
+
             self.llm = ChatOpenAI(
-                model=model_config['model'],
-                api_key=model_config.get('apiKey'),
-                base_url=model_config.get('apiBase')
+                model=model_config["model"],
+                api_key=model_config.get("apiKey"),
+                base_url=model_config.get("apiBase"),
             )
-        elif self.provider == 'venice':
+        elif self.provider == "venice":
             from chat_venice_api import ChatVeniceAPI
+
             self.llm = ChatVeniceAPI(
-                model=model_config['model'],
-                api_key=model_config.get('apiKey'),
-                base_url=model_config.get('apiBase')
+                model=model_config["model"],
+                api_key=model_config.get("apiKey"),
+                base_url=model_config.get("apiBase"),
             )
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -73,7 +107,7 @@ class LLMUtil:
             try:
                 self.logger.debug(f"Sending prompt to LLM:\n{prompt}")
                 response = self.llm.invoke(prompt)
-                response = getattr(response, 'content', str(response))
+                response = getattr(response, "content", str(response))
                 self.logger.debug(f"Received response from LLM:\n{response}")
                 return response
             except Exception as e:
@@ -83,8 +117,12 @@ class LLMUtil:
                     time.sleep(wait_time)
                     wait_time *= 2
                 else:
-                    self.logger.error(f"LLM API request failed after {max_retries} attempts: {e}")
-                    raise Exception(f"LLM API request failed after {max_retries} attempts: {str(e)}")
+                    self.logger.error(
+                        f"LLM API request failed after {max_retries} attempts: {e}"
+                    )
+                    raise Exception(
+                        f"LLM API request failed after {max_retries} attempts: {str(e)}"
+                    )
 
     def split_text(self, text: str, max_chunk_size: int) -> List[str]:
         """Split text into manageable chunks for processing."""
@@ -146,7 +184,11 @@ class LLMUtil:
             raise
 
     def summarize_link(
-        self, context: str, prompt_template: str, max_title_length: int, max_summary_length: int
+        self,
+        context: str,
+        prompt_template: str,
+        max_title_length: int,
+        max_summary_length: int,
     ) -> LinkSummary:
         """Summarize a webpage or other content."""
         result = self.generate_structured_output(
@@ -179,7 +221,11 @@ class LLMUtil:
             return result
 
     def translate_text(
-        self, text: str, target_language: str, prompt_template: str, max_chunk_size: int = 2000
+        self,
+        text: str,
+        target_language: str,
+        prompt_template: str,
+        max_chunk_size: int = 2000,
     ) -> str:
         """Translate the given text into the target language using the provided language prompt."""
         if not prompt_template:
@@ -197,8 +243,10 @@ class LLMUtil:
                 translated_chunks.append(translated_chunk)
             except Exception as e:
                 self.logger.error(f"Translation failed for a chunk: {e}")
-                translated_chunks.append(chunk)  # Append the original chunk if translation fails
+                translated_chunks.append(
+                    chunk
+                )  # Append the original chunk if translation fails
 
         # Recombine the translated chunks with double newlines to preserve markdown structure
-        translated_text = '\n\n'.join(translated_chunks)
+        translated_text = "\n\n".join(translated_chunks)
         return translated_text

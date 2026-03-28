@@ -12,7 +12,14 @@ from typing import List
 import requests
 from langchain_unstructured import UnstructuredLoader
 
-from llm_util import LLMUtil, ConversationThemes, ConversationTheme, SimilarityGroups
+from llm_util import (
+    LLMUtil,
+    ConversationThemes,
+    ConversationTheme,
+    SimilarityGroups,
+    ThemeActions,
+    ThemeAction,
+)
 import random
 from vision_util import VisionUtil
 import yt_dlp
@@ -390,10 +397,100 @@ def build_conversation_chunks(messages, group_config, llm_dict):
     return themes_llm.split_text(combined_text, max_chunk_size)
 
 
-def generate_themes(chunk, group_config, llm):
+def format_recent_themes(recent_themes: List[ConversationTheme]) -> str:
+    """Format recent themes as a numbered list for injection into the prompt."""
+    if not recent_themes:
+        return ""
+    lines = []
+    for i, theme in enumerate(recent_themes, 1):
+        lines.append(f"{i}. {theme.name}")
+        lines.append(f"   {theme.summary}")
+        if theme.dissenting_opinions:
+            lines.append(f"   Dissenting: {theme.dissenting_opinions}")
+    return "\n".join(lines)
+
+
+def apply_theme_actions(
+    actions: ThemeActions,
+    recent_themes: List[ConversationTheme],
+    all_themes: List[ConversationTheme],
+) -> List[ConversationTheme]:
+    """Apply ThemeAction results: update existing themes or create new ones.
+
+    Updates replace the corresponding entry in both recent_themes and all_themes
+    so the sliding window carries the latest version and the master list stays
+    deduplicated.
+
+    Returns the list of new ConversationTheme objects (only genuinely new themes,
+    not updates).
+    """
+    new_themes = []
+    for action in actions.themes:
+        theme = ConversationTheme(
+            name=action.name,
+            summary=action.summary,
+            dissenting_opinions=action.dissenting_opinions or "",
+        )
+        if action.action == "update" and action.theme_id is not None:
+            idx = action.theme_id - 1  # theme_id is 1-indexed
+            if 0 <= idx < len(recent_themes):
+                old_theme = recent_themes[idx]
+                # Find and replace in the master list
+                try:
+                    master_idx = all_themes.index(old_theme)
+                    all_themes[master_idx] = theme
+                except ValueError:
+                    # Old theme not found in master (shouldn't happen) — add as new
+                    all_themes.append(theme)
+                # Update in the sliding window
+                recent_themes[idx] = theme
+                logging.info(f"  Updated theme #{action.theme_id}: {action.name}")
+            else:
+                logging.warning(
+                    f"  Invalid theme_id {action.theme_id} (only {len(recent_themes)} recent themes) — treating as new"
+                )
+                all_themes.append(theme)
+                new_themes.append(theme)
+        else:
+            logging.info(f"  New theme: {action.name}")
+            all_themes.append(theme)
+            new_themes.append(theme)
+    return new_themes
+
+
+def generate_themes(chunk, group_config, llm, recent_themes=None):
+    """Generate themes from a conversation chunk.
+
+    When sliding window is enabled and recent_themes are provided, returns a
+    ThemeActions object.  Otherwise returns a ConversationThemes object.
+    Returns None on failure.
+    """
     themes_config = group_config.get("themes", {})
+    sliding_window = themes_config.get("sliding_window", {})
+    use_sliding_window = sliding_window.get("enabled", False) and recent_themes
+
+    if use_sliding_window:
+        prompt_template = sliding_window.get("prompt", "")
+        recent_themes_text = format_recent_themes(recent_themes)
+        try:
+            logging.debug("Generating themes with sliding window prompt:")
+            logging.debug(f"Recent themes:\n{recent_themes_text}")
+            logging.debug(f"Context:\n{chunk}")
+            actions = llm.generate_structured_output(
+                prompt_template=prompt_template,
+                context=chunk,
+                pydantic_class=ThemeActions,
+                recent_themes=recent_themes_text,
+            )
+            logging.debug(f"Generated theme actions:\n{actions}")
+            return actions
+        except Exception as e:
+            logging.error(f"Failed to generate themes with sliding window: {e}")
+            logging.info("Falling back to standard theme extraction")
+            # Fall through to standard extraction below
+
+    # Standard extraction (no sliding window or fallback)
     themes_prompt_template = themes_config.get("prompt", "")
-    # Generate structured themes
     try:
         logging.debug("Generating themes with prompt:")
         logging.debug(f"Prompt Template:\n{themes_prompt_template}")
@@ -1271,11 +1368,66 @@ def summarize_group(
         summaries = [ConversationThemes(**theme_dict) for theme_dict in summaries_dicts]
         logging.info(f"Loaded themes from resume data for group {group_id}")
     else:
-        summaries = []
-        for conversation_chunk in conversation_chunks:
-            themes = generate_themes(conversation_chunk, group_config, themes_llm)
-            if themes:
-                summaries.append(themes)
+        themes_config = group_config.get("themes", {})
+        sliding_window_config = themes_config.get("sliding_window", {})
+        sw_enabled = sliding_window_config.get("enabled", False)
+        sw_size = sliding_window_config.get("window_size", 5)
+
+        if sw_enabled:
+            # Sliding-window mode: maintain a master list of deduplicated themes.
+            # Updates replace existing entries; new themes are appended.
+            all_themes: List[ConversationTheme] = []
+            recent_themes: List[ConversationTheme] = []
+
+            for i, conversation_chunk in enumerate(conversation_chunks):
+                logging.info(
+                    f"Processing chunk {i + 1}/{len(conversation_chunks)}"
+                    + (
+                        f" (sliding window: {len(recent_themes)} recent themes)"
+                        if recent_themes
+                        else ""
+                    )
+                )
+                result = generate_themes(
+                    conversation_chunk,
+                    group_config,
+                    themes_llm,
+                    recent_themes=recent_themes if recent_themes else None,
+                )
+                if result is None:
+                    continue
+
+                if isinstance(result, ThemeActions):
+                    # Sliding window returned actions — apply them
+                    new_themes = apply_theme_actions(result, recent_themes, all_themes)
+                    # Add only genuinely new themes to the sliding window
+                    for t in new_themes:
+                        recent_themes.append(t)
+                    # Trim sliding window to last sw_size themes
+                    if len(recent_themes) > sw_size:
+                        recent_themes = recent_themes[-sw_size:]
+                elif isinstance(result, ConversationThemes):
+                    # First chunk or fallback — standard themes
+                    for t in result.themes:
+                        all_themes.append(t)
+                        recent_themes.append(t)
+                    if len(recent_themes) > sw_size:
+                        recent_themes = recent_themes[-sw_size:]
+
+            logging.info(
+                f"Sliding window extraction complete: {len(all_themes)} unique themes"
+            )
+            # Wrap into a single ConversationThemes for the merge pipeline
+            summaries = [ConversationThemes(themes=all_themes)]
+        else:
+            # Standard mode: no sliding window
+            summaries = []
+            for i, conversation_chunk in enumerate(conversation_chunks):
+                logging.info(f"Processing chunk {i + 1}/{len(conversation_chunks)}")
+                themes = generate_themes(conversation_chunk, group_config, themes_llm)
+                if themes:
+                    summaries.append(themes)
+
         # Convert to serializable format
         summaries_dicts = [t.dict() for t in summaries]
         group_resume_data["themes"] = summaries_dicts
