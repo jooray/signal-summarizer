@@ -1,4 +1,12 @@
 #!/bin/bash
-scp -r username@server:signal-message-processor/messages.db messages-new.db
-rsync -ralp username@server:signal-message-processor/attachments/* attachments/ &
-poetry run python3 ./import_messages.py messages-new.db messages.db
+set -euo pipefail
+
+REMOTE_HOST="username@server"
+REMOTE_ROOT="signal-message-processor"
+LOCAL_DB="messages-new.db"
+LOCAL_ATTACHMENTS="attachments"
+
+scp -r "${REMOTE_HOST}:${REMOTE_ROOT}/messages.db" "${LOCAL_DB}"
+mkdir -p "${LOCAL_ATTACHMENTS}"
+rsync -ralp "${REMOTE_HOST}:${REMOTE_ROOT}/attachments/" "${LOCAL_ATTACHMENTS}/"
+poetry run python ./import_messages.py "${LOCAL_DB}" messages.db

@@ -46,8 +46,10 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 - **Handles Large Prompts**: Splits and recombines messages for efficient processing using LangChain's text splitter.
 - **Modular Design**: Utilizes separate components for LLM interactions, vision processing, and speech-to-text.
 - **Resume Functionality**: Supports resuming the summarization process from the last successful step using a resume file.
+- **Sliding Window Theme Extraction**: Can carry recent themes across chunks and decide whether each new chunk updates an existing theme or introduces a new one.
 - **Customizable Similarity Threshold**: Allows configuration of the similarity threshold for merging themes during recombination.
-- **New Embedding-Based Clustering**: Optionally group themes first with embeddings + clustering before verifying with the existing similarity prompt (reduces the number of LLM calls).
+- **Embedding-Based Clustering**: Optionally group themes first with embeddings + clustering before verifying with the existing similarity prompt (reduces the number of LLM calls).
+- **Cluster Refinement**: Can split oversized clusters, enforce pairwise cohesion, and run a final cross-cluster merge pass.
 - **Selective Redo Options**: Provides command-line options to redo specific parts of the summarization process.
 
 ## Requirements
@@ -70,8 +72,8 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/jooray/signal-group-summarizer.git
-   cd signal-group-summarizer
+   git clone https://github.com/jooray/signal-summarizer.git
+   cd signal-summarizer
    ```
 
 2. **Install dependencies using Poetry:**
@@ -233,7 +235,31 @@ Example `config.json` snippet:
   "model": "mxbai-embed-large",
   "method": "hdbscan",
   "min_cluster_size": 2,
-  "hdbscan_min_samples": 1
+  "hdbscan_min_samples": 2,
+  "max_cluster_size": 20,
+  "refine_similarity_threshold": 0.75,
+  "refine_resolution": 1.35,
+  "cohesion": {
+    "high_rating_min": 0.30,
+    "high_rating_avg": 0.40,
+    "low_rating_min": 0.40,
+    "low_rating_avg": 0.50
+  },
+  "cross_cluster_merge": true
+}
+```
+
+Example `themes` snippet with sliding window enabled:
+
+```json
+"themes": {
+  "model": "local-llama",
+  "max_chunk_size": 9000,
+  "sliding_window": {
+    "enabled": true,
+    "window_size": 5,
+    "prompt": "..."
+  }
 }
 ```
 
@@ -265,6 +291,7 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
 - **database**: Path to the SQLite database containing messages.
 - **attachment_root**: Path to the directory containing attachments.
 - **output_file**: Default output file for summaries.
+- **output_file_orig**: Optional file for the English or pre-translation summary.
 - **language**: The language to ensure in the summaries.
 - **resume_file**: Path to the resume file for saving progress (optional).
 - **embedding_clustering**: (Optional) Settings for embedding-based clustering of themes (supports HDBSCAN, DBSCAN, and Louvain methods).
@@ -290,10 +317,21 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
   - **method**: Clustering algorithm to use: `hdbscan` (default), `dbscan`, or `louvain`.
   - **min_cluster_size**: (HDBSCAN) Minimum cluster size (default: 2).
   - **hdbscan_min_samples**: (HDBSCAN) Minimum samples for core points (default: 1).
+  - **max_cluster_size**: Maximum cluster size before the tool tries to split an oversized cluster.
+  - **refine_similarity_threshold**: Similarity threshold used during oversized-cluster refinement.
+  - **refine_resolution**: Louvain resolution used during oversized-cluster refinement.
+  - **cohesion**: Pairwise embedding thresholds used to reject weak similarity groups before merging.
+  - **cross_cluster_merge**: Runs a final merge pass across themes that survived the initial cluster boundaries.
   - **eps**: (DBSCAN) Maximum distance between samples in the same neighborhood.
   - **min_samples**: (DBSCAN) Minimum samples for a core point.
   - **similarity_threshold**: (Louvain) Minimum similarity for edge creation (default: 0.5).
   - **resolution**: (Louvain) Resolution parameter for community detection (default: 1.0).
+
+- **themes**:
+  - **prompt**: Theme extraction prompt for each chunk.
+  - **sliding_window.enabled**: Enables incremental theme extraction across neighboring chunks.
+  - **sliding_window.window_size**: Number of recent themes to expose to the next chunk.
+  - **sliding_window.prompt**: Prompt used when the model decides whether to update or create themes.
 
 - **models**: Define all LLM models you intend to use, specifying their providers (`ollama`, `venice`, or `openai`), endpoints, and necessary credentials.
 

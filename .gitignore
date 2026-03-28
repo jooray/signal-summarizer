@@ -3,6 +3,7 @@ messages.db
 poetry.lock
 summary*.md
 sync-messages.sh
+config-optionplus-venice-e2ee.json.orig
 outputs/*
 run.sh
 run*.sh

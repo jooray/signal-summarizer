@@ -30,35 +30,50 @@
     },
     "themes": {
       "model": "local-llama",
-      "prompt": "Analyze the following conversation and extract the main themes. For each theme, provide a theme name, a detailed summary of the theme, and any dissenting opinions. Ensure that the summaries are comprehensive and cover all relevant points discussed. Output in JSON format as specified, ensuring that the JSON keys are exactly as given and in English, even if the content is in another language.\n{format_instructions}\nNote that \"null\" is not a valid attribute value, use None or \"\" if there are no dissenting_opinions.\n\nGroup conversation log:\n{context}",
-      "max_chunk_size": 5000
+      "prompt": "Analyze the following conversation and extract only the main discussion themes. Prefer concrete, coherent themes over generic umbrellas. Merge nearby subtopics only when they are clearly part of the same concrete discussion.\n\nRules:\n- Return at most 4 themes for this chunk.\n- Each summary must be concise: 2-4 sentences.\n- Theme names must be short, specific, and concrete.\n- Do not create vague umbrella themes such as 'technology and society', 'geopolitics and markets', or 'privacy and freedom' unless the chunk is truly about that broad topic throughout.\n- Do not create separate themes for isolated jokes, memes, screenshots, or one-off remarks unless they triggered meaningful discussion.\n- If a screenshot or link is discussed, focus on the actual discussion it triggered, not the screenshot itself.\n- Include dissenting_opinions only when there is a real disagreement or competing interpretation. Otherwise use an empty string.\n- Output in English even if the conversation is in another language.\n\n{format_instructions}\n\nGroup conversation log:\n{context}",
+      "max_chunk_size": 9000,
+      "sliding_window": {
+        "enabled": true,
+        "window_size": 5,
+        "prompt": "You are analyzing a group conversation chunk by chunk. Below are the most recent themes extracted from previous chunks. Your job is to either UPDATE an existing theme if the current conversation continues or adds to it, or create a NEW theme if the topic is genuinely new.\n\nRecent themes from previous chunks:\n{recent_themes}\n\nRules:\n- For each topic in the conversation below, decide: does it continue/extend one of the recent themes above, or is it a genuinely new topic?\n- If it continues an existing theme, set action to 'update' and theme_id to the number of that theme. Provide an updated name (if needed) and an updated summary that incorporates both the old and new information. Keep the summary concise: 2-4 sentences total, not an accumulation of everything.\n- If it is a new topic not covered by any recent theme, set action to 'new' with theme_id as null.\n- Do NOT force-fit a new topic into an existing theme. Only update when genuinely related.\n- Do NOT update a theme if the conversation only tangentially mentions the same broad area. The discussion must actually continue or add substance to the specific theme.\n- Return at most 4 themes total (updates + new combined).\n- Theme names must be short, specific, and concrete.\n- Do not create vague umbrella themes.\n- Include dissenting_opinions only when there is a real disagreement. Otherwise use an empty string.\n- Output in English even if the conversation is in another language.\n\n{format_instructions}\n\nGroup conversation log:\n{context}"
+      }
     },
     "embedding_clustering": {
       "enabled": true,
       "model": "mxbai-embed-large",
       "method": "hdbscan",
       "min_cluster_size": 2,
-      "hdbscan_min_samples": 1
+      "hdbscan_min_samples": 2,
+      "max_cluster_size": 20,
+      "refine_similarity_threshold": 0.75,
+      "refine_resolution": 1.35,
+      "cohesion": {
+        "high_rating_min": 0.30,
+        "high_rating_avg": 0.40,
+        "low_rating_min": 0.40,
+        "low_rating_avg": 0.50
+      },
+      "cross_cluster_merge": true
     },
     "themes_recombination": {
       "model": "local-llama",
       "batch_size": 5,
       "max_iterations": 8,
       "convergence_threshold": 3,
-      "similarity_threshold": 3.5,
-      "similarity_prompt": "Identify similar themes from the list below, and for each group of similar themes, provide the theme numbers and a similarity rating on scale 1 to 6. The similarity rating meanings are as follows:\n\n1 - No similarity (\"Bitcoin\", \"particle physics\")\n2 - Small similarity (\"economics\", \"decentralization\")\n3 - Broad subset similarity (\"Bitcoin\", \"finance\"), meaning one is a subset of another\n4 - Narrow subset similarity, meaning topics are very close together (\"War\", \"Military draft\")\n5 - Topics are very similar (\"Bitcoin\", \"Bitcoin investing\")\n6 - Topics are basically the same, continuation of possibly the same conversation (\"Bitcoin investing\", \"Bitcoin price\")\n\nOnly group themes that have similarity ratings of 4 or higher. Provide an array of similarity groups, each with theme numbers and the similarity rating.\n\nThemes to process:\n{context}\n\n{format_instructions}",
-      "merging_prompt": "Merge the following themes into a single consolidated theme. The consolidated theme should include all content from all the themes it's merging. Provide the merged theme in the specified format. Do not mention in the response that it's a merged theme, only merge the topics.\n\nThemes to merge:\n{context}\n\n{format_instructions}"
+      "similarity_threshold": 4.0,
+      "similarity_prompt": "Identify which themes are genuinely the same topic or near-duplicate discussions.\n\nUse this scale:\n1 - Unrelated\n2 - Same broad domain only; should stay separate\n3 - Related but still distinct; should stay separate\n4 - Same concrete topic with one being a narrow subset/example of the other\n5 - Very similar topic with only minor framing differences\n6 - Essentially the same discussion or direct continuation\n\nStrict grouping rules:\n- Group themes only when they can be merged without losing important specificity.\n- Do NOT group themes just because they share a broad area such as technology, privacy, geopolitics, finance, Apple, Android, Bitcoin, or the state.\n- Do NOT create chain groups from weak links. If A is similar to B and B is similar to C, group all three only if all three are genuinely one concrete topic.\n- Prefer no group over an over-broad group.\n- Group themes rated 4 or higher only.\n\nProvide an array of similarity groups, each with theme numbers and the similarity rating.\n\nThemes to process:\n{context}\n\n{format_instructions}",
+      "merging_prompt": "Merge the following themes into one consolidated theme only if they are truly the same concrete topic.\n\nRules:\n- Preserve specificity. Do not generalize into a vague umbrella theme.\n- The merged theme must represent the shared concrete subject, not the broad domain around it.\n- Deduplicate repeated points and keep only the important details.\n- Keep the summary concise: 2-4 sentences.\n- Keep dissenting opinions short and only include them if they remain meaningful after the merge.\n- The theme name must stay specific and concrete.\n- Do not mention that this is a merged theme.\n- Avoid generic names like 'Technology and society', 'Privacy and security', or 'Geopolitical tensions' unless every source theme is truly about the same concrete topic at that level.\n\nThemes to merge:\n{context}\n\n{format_instructions}"
     },
     "translation": {
       "model": "local-llama",
       "max_chunk_size": 5000,
-      "prompt": "Translate the following markdown text to {language}. IMPORTANT: 1) Preserve ALL markdown formatting (headings ##, bold **text**, links, bullets) 2) Preserve ALL blank lines between sections 3) Output ONLY the translated text. TEXT:\n{context}"
+      "prompt": "Translate the following markdown text to {language}. IMPORTANT RULES:\n1. Preserve ALL markdown formatting exactly: headings (##), bold (**text**), links, bullet points\n2. Preserve ALL blank lines between paragraphs and sections - do not collapse them\n3. Translate ALL text including headings\n4. Output ONLY the translated text, no confirmations or explanations\n5. Preserve the exact structure - if there's a blank line before **Dissenting opinions:**, keep it\n\nText to translate:\n{context}"
     },
     "vision_config": {
       "enabled": true,
       "endpoint": "http://127.0.0.1:11434",
       "model": "llama3.2-vision:latest",
-      "prompt": "Describe the following image from a group chat. The group's description is \"{group_description}\", and common topics are {common_topics}. Provide a description that can be used in a summary of the group topic. If there is text in the image, transcribe it fully. Do not add hashtags or extra comments. Output only the description, preferably in less than one paragraph."
+      "prompt": "Describe the image briefly and literally for chat summarization. If there is visible text, transcribe the important text faithfully. Do not infer ideology, intent, market meaning, or broader significance unless it is explicit in the image itself. Do not mention the group description or common topics. Output only 1-3 short sentences."
     },
     "speech_to_text": {
       "enabled": true,
