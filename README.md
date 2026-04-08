@@ -76,12 +76,39 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
    cd signal-summarizer
    ```
 
-2. **Install dependencies using Poetry:**
+2. **Install dependencies using [uv](https://docs.astral.sh/uv/) (recommended):**
 
    ```bash
-   pip install poetry
+   # Install uv if you don't have it
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   # Create the virtual environment and install all dependencies from uv.lock
+   uv sync
+   ```
+
+   `uv sync` will read `pyproject.toml` and `uv.lock`, pick a matching
+   Python interpreter (installing one via `uv python install` if needed),
+   and create a local `.venv/`. Run any command inside the environment
+   with `uv run`, for example `uv run python ./summarize_signal_group.py`.
+
+   To add a new dependency later use `uv add <package>` (this updates
+   `pyproject.toml` and `uv.lock` together).
+
+   <details>
+   <summary><strong>Using Poetry instead</strong></summary>
+
+   Poetry 2.0+ understands the standards-compliant `pyproject.toml`
+   shipped in this repo and can be used as an alternative:
+
+   ```bash
+   pip install "poetry>=2.0"
    poetry install
    ```
+
+   Caveat: only `uv.lock` is committed. Poetry will resolve dependencies
+   fresh and may pick slightly different versions than `uv.lock` — use uv
+   if you need reproducible installs.
+   </details>
 
 3. **Configure the tool:**
 
@@ -98,7 +125,7 @@ similar, or grouping many unrelated themes to a few grand themes ("Geopolitic" o
 #### List Available Groups
 
 ```bash
-poetry run summarize_signal_group --list-groups
+uv run python ./summarize_signal_group.py --list-groups
 ```
 
 #### Generate Summary for Specific Group(s)
@@ -106,7 +133,7 @@ poetry run summarize_signal_group --list-groups
 To generate a summary for specific group(s), use:
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID1 GROUP_ID2
+uv run python ./summarize_signal_group.py --group GROUP_ID1 GROUP_ID2
 ```
 
 If no `--group` is specified, the script will summarize all groups defined in the `config.json`.
@@ -114,25 +141,25 @@ If no `--group` is specified, the script will summarize all groups defined in th
 #### Specify Output File
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --output summary.md
+uv run python ./summarize_signal_group.py --group GROUP_ID --output summary.md
 ```
 
 #### Specify Date Range
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --since YYYY-MM-DD --until YYYY-MM-DD
+uv run python ./summarize_signal_group.py --group GROUP_ID --since YYYY-MM-DD --until YYYY-MM-DD
 ```
 
 #### Summarize Last Week or Month
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --last-week
+uv run python ./summarize_signal_group.py --group GROUP_ID --last-week
 ```
 
 or
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --last-month
+uv run python ./summarize_signal_group.py --group GROUP_ID --last-month
 ```
 
 #### Regenerate Attachment Descriptions
@@ -140,7 +167,7 @@ poetry run summarize_signal_group --group GROUP_ID --last-month
 If you want to force regeneration of attachment descriptions (e.g., image descriptions, audio transcriptions), use:
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --regenerate-attachment-descriptions
+uv run python ./summarize_signal_group.py --group GROUP_ID --regenerate-attachment-descriptions
 ```
 
 #### Regenerate Link Summaries
@@ -148,7 +175,7 @@ poetry run summarize_signal_group --group GROUP_ID --regenerate-attachment-descr
 If you want to force regeneration of link summaries, use:
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --regenerate-link-summaries
+uv run python ./summarize_signal_group.py --group GROUP_ID --regenerate-link-summaries
 ```
 
 #### Redo Specific Steps
@@ -158,19 +185,19 @@ To redo specific parts of the summarization process even if they are present in 
 - **Redo Themes Generation** (implies `--redo-merging`):
 
   ```bash
-  poetry run summarize_signal_group --group GROUP_ID --redo-themes
+  uv run python ./summarize_signal_group.py --group GROUP_ID --redo-themes
   ```
 
 - **Redo Merging of Themes**:
 
   ```bash
-  poetry run summarize_signal_group --group GROUP_ID --redo-merging
+  uv run python ./summarize_signal_group.py --group GROUP_ID --redo-merging
   ```
 
 - **Redo Link Processing**:
 
   ```bash
-  poetry run summarize_signal_group --group GROUP_ID --redo-links
+  uv run python ./summarize_signal_group.py --group GROUP_ID --redo-links
   ```
 
 #### Keep Resume File After Successful Processing
@@ -178,7 +205,7 @@ To redo specific parts of the summarization process even if they are present in 
 By default, the resume file is deleted after successful processing. To keep the resume file, use:
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --keep-resume-file
+uv run python ./summarize_signal_group.py --group GROUP_ID --keep-resume-file
 ```
 
 #### Resuming from a Previous Run
@@ -190,7 +217,7 @@ If you are processing large groups or expect the summarization process to take a
 Specify a path for the resume file using the `--resume-file` command-line argument. The summarizer will save its progress to this file after each major step. If the summarizer is interrupted, you can rerun the command with the same resume file to continue from where it left off.
 
 ```bash
-poetry run summarize_signal_group --group GROUP_ID --resume-file resume.json
+uv run python ./summarize_signal_group.py --group GROUP_ID --resume-file resume.json
 ```
 
 ##### Resume File Configuration

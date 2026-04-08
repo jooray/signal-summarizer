@@ -1,37 +1,39 @@
-[tool.poetry]
+[project]
 name = "signal-summarizer"
 version = "0.1.0"
 description = "A summarizer of signal groups."
-authors = ["Juraj Bednar <juraj@bednar.io>"]
-license = "MIT"
+authors = [{ name = "Juraj Bednar", email = "juraj@bednar.io" }]
+license = { text = "MIT" }
 readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "pywhispercpp>=1.2.0,<2.0.0",
+    "ollama>=0.3.3,<0.4.0",
+    "langchain>=0.3.7,<0.4.0",
+    "langchain-community>=0.3.5,<0.4.0",
+    "beautifulsoup4>=4.12.3,<5.0.0",
+    "requests>=2.32.3,<3.0.0",
+    "youtube-transcript-api>=0.6.2,<0.7.0",
+    "pytube>=15.0.0,<16.0.0",
+    "pydantic>=2.9.2,<3.0.0",
+    "langchain-ollama>=0.2.0,<0.3.0",
+    "colorlog>=6.9.0,<7.0.0",
+    "langchain-unstructured>=0.1.5,<0.2.0",
+    "unstructured>=0.16.5,<0.17.0",
+    "langchain-openai>=0.2.9,<0.3.0",
+    "yt-dlp>=2024.11.18,<2025.0.0",
+    "scikit-learn>=1.6.0,<2.0.0",
+    "hdbscan>=0.8.33,<0.9.0",
+    "python-louvain>=0.16,<0.17",
+    "networkx>=3.0,<4.0",
+]
+
+# This project is an application, not a library: it is a collection of
+# top-level scripts that are executed directly (e.g.
+# `python ./summarize_signal_group.py`). It is not built, installed, or
+# published, so no build backend is needed and no package is produced.
+[tool.uv]
+package = false
+
+[tool.poetry]
 package-mode = false
-
-[tool.poetry.dependencies]
-python = ">=3.11,<3.13"
-pywhispercpp = "^1.2.0"
-ollama = "^0.3.3"
-langchain = "^0.3.7"
-langchain-community = "^0.3.5"
-beautifulsoup4 = "^4.12.3"
-requests = "^2.32.3"
-youtube-transcript-api = "^0.6.2"
-pytube = "^15.0.0"
-pydantic = "^2.9.2"
-langchain-ollama = "^0.2.0"
-colorlog = "^6.9.0"
-langchain-unstructured = "^0.1.5"
-unstructured = {extras = ["local"], version = "^0.16.5"}
-langchain-openai = "^0.2.9"
-yt-dlp = "^2024.11.18"
-scikit-learn = "^1.6.0"
-hdbscan = "^0.8.33"
-python-louvain = "^0.16"
-networkx = "^3.0"
-
-[tool.poetry.scripts]
-summarize_signal_group = "summarize_signal_group:main"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

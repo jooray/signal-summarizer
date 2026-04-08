@@ -1,6 +1,7 @@
 config.json
 messages.db
 poetry.lock
+.venv/
 summary*.md
 sync-messages.sh
 config-optionplus-venice-e2ee.json.orig
@@ -9,3 +10,5 @@ run.sh
 run*.sh
 config-*.json
 resume.json
+.claude/
+CLAUDE.md
