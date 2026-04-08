@@ -72,12 +72,16 @@ class LLMUtil:
         self.provider = model_config.get("provider", "ollama")
         self.logger = logging.getLogger("llm_util")
 
+        # Timeout in seconds for LLM requests (default 10 minutes)
+        self.request_timeout = model_config.get("request_timeout", 600)
+
         if self.provider == "ollama":
             from langchain_ollama import ChatOllama
 
             self.llm = ChatOllama(
                 base_url=model_config.get("endpoint", "http://localhost:11434"),
                 model=model_config["model"],
+                client_kwargs={"timeout": self.request_timeout},
             )
         elif self.provider == "openai":
             from langchain_openai import ChatOpenAI
@@ -86,6 +90,8 @@ class LLMUtil:
                 model=model_config["model"],
                 api_key=model_config.get("apiKey"),
                 base_url=model_config.get("apiBase"),
+                request_timeout=self.request_timeout,
+                max_retries=3,
             )
         elif self.provider == "venice":
             from chat_venice_api import ChatVeniceAPI
@@ -94,6 +100,8 @@ class LLMUtil:
                 model=model_config["model"],
                 api_key=model_config.get("apiKey"),
                 base_url=model_config.get("apiBase"),
+                request_timeout=self.request_timeout,
+                max_retries=3,
             )
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -142,9 +150,15 @@ class LLMUtil:
         context: str,
         pydantic_class: Type[BaseModel],
         max_retries: int = 3,
+        network_retries: int = 5,
         **kwargs,
     ) -> BaseModel:
-        """Generate structured output using a Pydantic model with OutputFixingParser."""
+        """Generate structured output using a Pydantic model with OutputFixingParser.
+
+        Args:
+            max_retries: Retries for output parsing failures.
+            network_retries: Retries for network/timeout failures with exponential backoff.
+        """
         # Initialize the Pydantic parser
         pydantic_parser = PydanticOutputParser(pydantic_object=pydantic_class)
 
@@ -174,14 +188,49 @@ class LLMUtil:
             max_retries=max_retries,
         )
 
-        try:
-            # Use OutputFixingParser to parse and fix the output if necessary
-            result = output_fixer.parse(full_prompt)
-            self.logger.debug(f"Received structured output:\n{result}")
-            return result
-        except Exception as e:
-            self.logger.error(f"Failed to generate valid output: {e}")
-            raise
+        wait_time = 3
+        for attempt in range(network_retries):
+            try:
+                # Use OutputFixingParser to parse and fix the output if necessary
+                result = output_fixer.parse(full_prompt)
+                self.logger.debug(f"Received structured output:\n{result}")
+                return result
+            except Exception as e:
+                error_str = str(e)
+                # Distinguish parsing errors (which OutputFixingParser already retried)
+                # from network/timeout errors (which need our retry loop)
+                is_network_error = any(
+                    keyword in error_str.lower()
+                    for keyword in [
+                        "timeout",
+                        "timed out",
+                        "connection",
+                        "connect",
+                        "refused",
+                        "reset",
+                        "broken pipe",
+                        "eof",
+                        "httpx",
+                        "network",
+                        "unreachable",
+                        "500",
+                        "502",
+                        "503",
+                        "504",
+                        "429",
+                        "rate limit",
+                    ]
+                )
+                if is_network_error and attempt < network_retries - 1:
+                    self.logger.warning(
+                        f"Structured output attempt {attempt + 1} failed with network error: {e}. "
+                        f"Retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                    wait_time *= 2
+                else:
+                    self.logger.error(f"Failed to generate valid output: {e}")
+                    raise
 
     def summarize_link(
         self,

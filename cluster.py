@@ -1,4 +1,5 @@
 import ollama
+import time
 import numpy as np
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_distances, cosine_similarity
@@ -52,11 +53,32 @@ def cluster_themes_with_embeddings(
 
 
 def _generate_embeddings(themes, model_name):
-    """Generate embeddings using Ollama."""
+    """Generate embeddings using Ollama with timeout and retry logic."""
+    logger = logging.getLogger("cluster")
+    # Create a client with an explicit timeout (120s for embeddings, which are fast)
+    client = ollama.Client(timeout=120)
     embeddings = []
+    max_retries = 5
     for theme in themes:
-        resp = ollama.embeddings(model=model_name, prompt=theme)
-        embeddings.append(resp["embedding"])
+        wait_time = 3
+        for attempt in range(max_retries):
+            try:
+                resp = client.embeddings(model=model_name, prompt=theme)
+                embeddings.append(resp["embedding"])
+                break
+            except Exception as e:
+                logger.warning(
+                    f"Embedding request failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    wait_time *= 2
+                else:
+                    logger.error(
+                        f"Embedding request failed after {max_retries} attempts for theme: {theme[:80]}..."
+                    )
+                    raise
     return np.array(embeddings)
 
 
