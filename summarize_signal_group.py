@@ -72,10 +72,7 @@ def main():
     # Initialize VisionUtil if needed
     vision_config = config.get('defaults', {}).get('vision_config', {})
     if vision_config.get('enabled', True):
-        vision_util = VisionUtil(
-            model_name=vision_config['model'],
-            base_url=vision_config['endpoint']
-        )
+        vision_util = VisionUtil(vision_config)
     else:
         vision_util = None
 
