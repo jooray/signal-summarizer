@@ -26,6 +26,7 @@ dependencies = [
     "hdbscan>=0.8.33,<0.9.0",
     "python-louvain>=0.16,<0.17",
     "networkx>=3.0,<4.0",
+    "httpx>=0.27.0,<1.0.0",
 ]
 
 # This project is an application, not a library: it is a collection of
