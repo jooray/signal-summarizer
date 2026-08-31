@@ -11,10 +11,15 @@ import time
 
 
 class LinkSummary(BaseModel):
-    title: Optional[str] = Field(description="The title of the webpage")
-    summary: Optional[str] = Field(description="A concise summary of the webpage")
+    # Pydantic v2 does not infer a default from Optional[...]; without an
+    # explicit default these stay required and every omitted key costs a
+    # parse failure plus a full retry round-trip.
+    title: Optional[str] = Field(default=None, description="The title of the webpage")
+    summary: Optional[str] = Field(
+        default=None, description="A concise summary of the webpage"
+    )
     error: Optional[str] = Field(
-        description="Error message if any occurred during summarization"
+        default=None, description="Error message if any occurred during summarization"
     )
 
 
@@ -22,7 +27,7 @@ class ConversationTheme(BaseModel):
     name: str = Field(description="Name of the theme")
     summary: str = Field(description="Summary of the discussion on this theme")
     dissenting_opinions: Optional[str] = Field(
-        description="Optional dissenting opinions on the topic"
+        default=None, description="Optional dissenting opinions on the topic"
     )
 
 

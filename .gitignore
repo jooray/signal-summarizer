@@ -9,6 +9,17 @@ outputs/*
 run.sh
 run*.sh
 config-*.json
+# backups of the above — `config-*.json` does NOT match `config-foo.json.bak-…`,
+# and the real configs carry live Venice keys
+config.json.*
+config-*.json.*
+# ...but the public sample must stay versioned
+!config.json.sample
 resume.json
 .claude/
 CLAUDE.md
+
+# Benchmark fixtures and outputs contain real conversation content
+bench/fixtures/
+bench/results/
+bench/**/*.log

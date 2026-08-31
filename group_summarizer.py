@@ -99,7 +99,10 @@ def get_date_range(args):
         since = None  # No lower limit
 
     if args.until:
-        until = datetime.datetime.strptime(args.until, "%Y-%m-%d")
+        # --until is documented as inclusive, so cover the whole named day
+        until = datetime.datetime.strptime(args.until, "%Y-%m-%d") + datetime.timedelta(
+            days=1, microseconds=-1
+        )
     else:
         until = datetime.datetime.now()
 
@@ -109,6 +112,14 @@ def get_date_range(args):
 def fetch_messages(database, group_id, since, until):
     conn = sqlite3.connect(database)
     cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_group_ts ON messages (groupId, timestamp)"
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        # A read-only database is a legitimate setup; the scan still works.
+        logging.debug(f"Could not create messages index: {e}")
     query = """SELECT id, source, sourceName, timestamp, message, attachmentPaths, attachmentDescriptions, quoteText FROM messages WHERE groupId = ?"""
     params = [group_id]
     if since:
@@ -119,6 +130,8 @@ def fetch_messages(database, group_id, since, until):
     if until:
         query += " AND timestamp <= ?"
         params.append(int(until.timestamp() * 1000))
+
+    query += " ORDER BY timestamp ASC, id ASC"
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -384,11 +397,15 @@ def build_conversation_chunks(messages, group_config, llm_dict):
         timestamp = datetime.datetime.fromtimestamp(msg["timestamp"] / 1000).strftime(
             "%Y-%m-%d %H:%M"
         )
-        text_parts = [f"[{timestamp}] {msg['sourceName']}: {msg['message']}"]
+        body = (msg.get("message") or "").strip()
+        header = f"[{timestamp}] {msg['sourceName']}:"
+        text_parts = [f"{header} {body}" if body else header]
         if msg.get("quoteText"):
             text_parts.append(f'(In reply to: "{msg["quoteText"]}")')
         if msg.get("attachmentDescriptions"):
             text_parts.extend(msg["attachmentDescriptions"])
+        if not body and len(text_parts) == 1:
+            continue  # nothing to say: no text, no quote, no description
         messages_texts.append("\n".join(text_parts))
 
     combined_text = "\n".join(messages_texts)
@@ -617,6 +634,7 @@ def should_merge_similarity_group(
     group,
     embedding_similarity_matrix,
     cohesion_config=None,
+    cluster_indices=None,
 ):
     if len(candidate_indices) <= 1:
         return False
@@ -627,12 +645,19 @@ def should_merge_similarity_group(
     if cohesion_config is None:
         cohesion_config = {}
 
+    # candidate_indices are 1-based positions *within this cluster*, but the
+    # similarity matrix is indexed by global theme position. Map through
+    # cluster_indices before reading it, or the gate compares unrelated themes.
     local_indices = [idx - 1 for idx in candidate_indices]
+    if cluster_indices is not None:
+        matrix_indices = [cluster_indices[i] for i in local_indices]
+    else:
+        matrix_indices = local_indices
     pairwise_similarities = []
-    for i in range(len(local_indices)):
-        for j in range(i + 1, len(local_indices)):
+    for i in range(len(matrix_indices)):
+        for j in range(i + 1, len(matrix_indices)):
             similarity = float(
-                embedding_similarity_matrix[local_indices[i], local_indices[j]]
+                embedding_similarity_matrix[matrix_indices[i], matrix_indices[j]]
             )
             pairwise_similarities.append(similarity)
 
@@ -954,6 +979,7 @@ def merge_themes_in_cluster(
                 group,
                 embedding_similarity_matrix,
                 cohesion_config=cohesion_config,
+                cluster_indices=cluster_indices,
             )
         ):
             continue

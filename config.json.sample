@@ -41,7 +41,9 @@
     "embedding_clustering": {
       "enabled": true,
       "model": "mxbai-embed-large",
-      "method": "hdbscan",
+      "method": "dbscan",
+      "eps": 0.3,
+      "min_samples": 2,
       "min_cluster_size": 4,
       "hdbscan_min_samples": 2,
       "max_cluster_size": 20,
