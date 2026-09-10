@@ -173,6 +173,41 @@ def _cluster_louvain(embeddings, threshold=0.5, resolution=1.0, **kwargs):
     return clusters
 
 
+def topk_candidate_pairs(embeddings, k=3):
+    """Union of each theme's top-k nearest neighbours (cosine).
+
+    Deterministic (stable argsort). Returns a sorted list of unique (i, j)
+    index pairs with i < j. This is candidate *retrieval*, not a merge
+    decision: every pair still needs an LLM same/distinct verdict.
+    """
+    import logging
+
+    if embeddings is None or len(embeddings) == 0:
+        return []
+    n = len(embeddings)
+    if n < 2:
+        return []
+    similarity_matrix = cosine_similarity(embeddings)
+    pairs = set()
+    for i in range(n):
+        # Stable sort for deterministic output; self always ranks first.
+        neighbours = np.argsort(-similarity_matrix[i], kind="stable")
+        added = 0
+        for j in neighbours:
+            j = int(j)
+            if j == i:
+                continue
+            pairs.add((min(i, j), max(i, j)))
+            added += 1
+            if added >= k:
+                break
+    result = sorted(pairs)
+    logging.getLogger("cluster").debug(
+        f"top-{k} retrieval: {len(result)} candidate pairs from {n} themes"
+    )
+    return result
+
+
 def _labels_to_clusters(labels):
     """Convert label array to list of cluster indices."""
     clusters = []

@@ -1042,6 +1042,150 @@ def merge_themes_with_prompt(
         )
 
 
+PAIR_VERDICT_PROMPT = """Decide for each pair of themes whether they are the same concrete discussion.
+
+Use exactly one label per pair:
+- same: genuinely the same concrete topic; merging loses no important specificity
+- related: same broad domain (technology, privacy, finance, Apple, Bitcoin, …) but still distinct discussions; must stay separate
+- unrelated: different topics; must stay separate
+
+Do NOT label a pair "same" just because the themes share a broad area. A narrow
+subset/example of the other counts as "same" only if the subset adds nothing
+worth keeping separate. When in doubt, prefer "related" over "same".
+
+{format_instructions}
+
+Themes:
+{context}
+
+Pairs to judge (1-based theme numbers):
+{pairs}"""
+
+
+def nn_llm_merge(themes_list, group_config, merging_prompt_template, llm):
+    """Merge via nearest-neighbour retrieval + per-pair LLM verdicts.
+
+    1. Embed all themes, take the union of each theme's top-k neighbours as
+       merge *candidates* (config: embedding_clustering.nn_k, default 3).
+    2. Judge candidates in batches (nn_batch_size, default 10) with the pair
+       verdict prompt (embedding_clustering.pair_prompt overrides the default).
+    3. Union "same" edges; an "unrelated" verdict on a pair vetoes its union.
+       "related" pairs are simply never united.
+    4. Merge each multi-theme component with the standard merging prompt.
+
+    Returns a ConversationThemes, or None when there is nothing to merge.
+    """
+    from cluster import cluster_themes_with_embeddings, topk_candidate_pairs
+
+    all_themes = []
+    for tset in themes_list:
+        if tset and tset.themes:
+            all_themes.extend(tset.themes)
+
+    if not all_themes:
+        return None
+    if len(all_themes) == 1:
+        return ConversationThemes(themes=list(all_themes))
+
+    clustering_config = group_config.get("embedding_clustering", {})
+    model_name = clustering_config.get("model", "mxbai-embed-large")
+    k = int(clustering_config.get("nn_k", 3))
+    batch_size = int(clustering_config.get("nn_batch_size", 10))
+    similarity_floor = float(clustering_config.get("nn_similarity_floor", 0.0))
+    pair_prompt_template = clustering_config.get("pair_prompt", "") or PAIR_VERDICT_PROMPT
+
+    embedding_texts = [build_theme_embedding_text(theme) for theme in all_themes]
+    embeddings = cluster_themes_with_embeddings(
+        themes=embedding_texts,
+        model_name=model_name,
+        method="dbscan",  # embeddings only; clustering unused here
+        return_embeddings=True,
+    )[1]
+
+    candidate_pairs = topk_candidate_pairs(embeddings, k=k)
+    if similarity_floor > 0:
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        sim = cosine_similarity(embeddings)
+        candidate_pairs = [
+            (i, j) for (i, j) in candidate_pairs if sim[i, j] >= similarity_floor
+        ]
+    logging.info(
+        f"NN retrieval: {len(candidate_pairs)} candidate pairs from "
+        f"{len(all_themes)} themes (k={k}, floor={similarity_floor})"
+    )
+    if not candidate_pairs:
+        return ConversationThemes(themes=list(all_themes))
+
+    from llm_util import PairVerdicts
+
+    vetoed = set()
+    parent = list(range(len(all_themes)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    numbered = {idx: f"{idx + 1}. {capitalize_theme_name(t.name)}\n"
+                     f"Signature: {build_theme_pair_signature(t)}\n"
+                     f"Summary: {t.summary}"
+                for idx, t in enumerate(all_themes)}
+
+    for start in range(0, len(candidate_pairs), batch_size):
+        batch = candidate_pairs[start:start + batch_size]
+        involved = sorted({i for pair in batch for i in pair})
+        context = "\n\n".join(numbered[idx] for idx in involved)
+        pairs_text = "\n".join(f"[{i + 1}, {j + 1}]" for i, j in batch)
+        try:
+            verdicts = llm.generate_structured_output(
+                prompt_template=pair_prompt_template,
+                context=context,
+                pydantic_class=PairVerdicts,
+                pairs=pairs_text,
+            )
+        except Exception as e:
+            logging.error(f"Pair verdict batch failed, skipping {len(batch)} pairs: {e}")
+            continue
+        for verdict in verdicts.verdicts:
+            if len(verdict.pair) != 2:
+                continue
+            a, b = verdict.pair[0] - 1, verdict.pair[1] - 1
+            if not (0 <= a < len(all_themes) and 0 <= b < len(all_themes)):
+                logging.warning(f"Ignoring out-of-range pair verdict: {verdict.pair}")
+                continue
+            if verdict.decision == "same":
+                if (min(a, b), max(a, b)) not in vetoed:
+                    union(a, b)
+            elif verdict.decision == "unrelated":
+                vetoed.add((min(a, b), max(a, b)))
+
+    components = {}
+    for idx in range(len(all_themes)):
+        components.setdefault(find(idx), []).append(idx)
+
+    final_themes = []
+    for comp in components.values():
+        if len(comp) == 1:
+            final_themes.append(all_themes[comp[0]])
+        else:
+            logging.info(
+                f"Merging NN component: {[all_themes[i].name for i in comp]}"
+            )
+            final_themes.append(
+                merge_themes_with_prompt(
+                    [all_themes[i] for i in comp], llm, merging_prompt_template
+                )
+            )
+    return ConversationThemes(themes=final_themes)
+
+
 def recombine_themes(themes_list, group_config, llm):
     """
     This is the main entry point for recombining themes.
@@ -1056,6 +1200,13 @@ def recombine_themes(themes_list, group_config, llm):
 
     embedding_clustering_config = group_config.get("embedding_clustering", {})
     if embedding_clustering_config.get("enabled", False):
+        if embedding_clustering_config.get("method", "dbscan") == "nn-llm":
+            # Nearest-neighbour retrieval + per-pair LLM verdicts (no
+            # similarity clustering, no cohesion gate, no cross-cluster pass).
+            logging.info("Using NN retrieval + LLM verdict merging")
+            return nn_llm_merge(
+                themes_list, group_config, merging_prompt_template, llm
+            )
         # Use the embedding-based approach
         logging.info("Using embeddings-based clustering and merging")
         final_themes = embedding_cluster_and_merge(

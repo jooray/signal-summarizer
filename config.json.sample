@@ -41,7 +41,7 @@
     "embedding_clustering": {
       "enabled": true,
       "model": "mxbai-embed-large",
-      "method": "dbscan",
+      "method": "nn-llm",
       "eps": 0.3,
       "min_samples": 2,
       "min_cluster_size": 4,
@@ -50,12 +50,15 @@
       "refine_similarity_threshold": 0.75,
       "refine_resolution": 1.35,
       "cohesion": {
-        "high_rating_min": 0.30,
-        "high_rating_avg": 0.40,
-        "low_rating_min": 0.40,
-        "low_rating_avg": 0.50
+        "high_rating_min": 0.3,
+        "high_rating_avg": 0.4,
+        "low_rating_min": 0.4,
+        "low_rating_avg": 0.5
       },
-      "cross_cluster_merge": true
+      "cross_cluster_merge": true,
+      "nn_k": 3,
+      "nn_batch_size": 10,
+      "nn_similarity_floor": 0.0
     },
     "themes_recombination": {
       "model": "local-llama",

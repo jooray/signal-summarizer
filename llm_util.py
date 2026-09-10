@@ -71,6 +71,23 @@ class SimilarityGroups(BaseModel):
     groups: List[SimilarityGroup] = Field(description="List of similarity groups")
 
 
+class PairVerdict(BaseModel):
+    pair: List[int] = Field(
+        description="Two 1-based theme numbers, in the same order as presented"
+    )
+    decision: Literal["same", "related", "unrelated"] = Field(
+        description="same: genuinely the same concrete topic, safe to merge. "
+        "related: same broad domain but still distinct, keep separate. "
+        "unrelated: different topics, keep separate."
+    )
+
+
+class PairVerdicts(BaseModel):
+    verdicts: List[PairVerdict] = Field(
+        description="One verdict per presented pair, in any order"
+    )
+
+
 class LLMUtil:
     def __init__(self, model_config):
         self.model_config = model_config
@@ -80,36 +97,85 @@ class LLMUtil:
         # Timeout in seconds for LLM requests (default 10 minutes)
         self.request_timeout = model_config.get("request_timeout", 600)
 
+        # Generation controls. All optional; absent keys mean provider defaults.
+        # WARNING: provider defaults are usually wrong for cheap roles — most
+        # Venice reasoning models default to high reasoning effort, which burned
+        # the whole completion budget in benchmarks. Pin these per model.
+        self.temperature = model_config.get("temperature")
+        self.reasoning_effort = model_config.get("reasoning_effort")
+        self.max_tokens = model_config.get(
+            "max_tokens", model_config.get("max_completion_tokens")
+        )
+
         if self.provider == "ollama":
             from langchain_ollama import ChatOllama
 
-            self.llm = ChatOllama(
-                base_url=model_config.get("endpoint", "http://localhost:11434"),
-                model=model_config["model"],
-                client_kwargs={"timeout": self.request_timeout},
-            )
-        elif self.provider == "openai":
+            kwargs = {
+                "base_url": model_config.get("endpoint", "http://localhost:11434"),
+                "model": model_config["model"],
+                "client_kwargs": {"timeout": self.request_timeout},
+            }
+            if self.temperature is not None:
+                kwargs["temperature"] = self.temperature
+            if self.max_tokens is not None:
+                kwargs["num_predict"] = self.max_tokens
+            if self.reasoning_effort is not None:
+                self.logger.warning(
+                    "reasoning_effort=%s ignored: ChatOllama has no reasoning "
+                    "control in this langchain version",
+                    self.reasoning_effort,
+                )
+            self.llm = ChatOllama(**kwargs)
+        elif self.provider in ("openai", "venice"):
             from langchain_openai import ChatOpenAI
 
-            self.llm = ChatOpenAI(
-                model=model_config["model"],
-                api_key=model_config.get("apiKey"),
-                base_url=model_config.get("apiBase"),
-                request_timeout=self.request_timeout,
-                max_retries=3,
-            )
-        elif self.provider == "venice":
-            from chat_venice_api import ChatVeniceAPI
+            if self.provider == "venice":
+                from chat_venice_api import ChatVeniceAPI as ChatCls
+            else:
+                ChatCls = ChatOpenAI
 
-            self.llm = ChatVeniceAPI(
-                model=model_config["model"],
-                api_key=model_config.get("apiKey"),
-                base_url=model_config.get("apiBase"),
-                request_timeout=self.request_timeout,
-                max_retries=3,
-            )
+            kwargs = {
+                "model": model_config["model"],
+                "api_key": model_config.get("apiKey"),
+                "base_url": model_config.get("apiBase"),
+                "request_timeout": self.request_timeout,
+                "max_retries": 3,
+            }
+            if self.temperature is not None:
+                kwargs["temperature"] = self.temperature
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.reasoning_effort is not None:
+                # Passed through verbatim in the request body; supported by
+                # Venice and OpenAI-compatible endpoints (Ollama/MTPLX ignore
+                # unknown body fields server-side — verify per endpoint).
+                kwargs["extra_body"] = {
+                    "reasoning_effort": self.reasoning_effort
+                }
+            self.llm = ChatCls(**kwargs)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
+
+        self.logger.debug(
+            "LLM effective params: provider=%s model=%s temperature=%s "
+            "reasoning_effort=%s max_tokens=%s",
+            self.provider,
+            model_config.get("model"),
+            self.temperature,
+            self.reasoning_effort,
+            self.max_tokens,
+        )
+
+    def effective_params(self):
+        """Return the generation controls actually applied to the client."""
+        return {
+            "provider": self.provider,
+            "model": self.model_config.get("model"),
+            "temperature": self.temperature,
+            "reasoning_effort": self.reasoning_effort,
+            "max_tokens": self.max_tokens,
+            "request_timeout": self.request_timeout,
+        }
 
     def generate(self, prompt: str) -> str:
         """Generate a response from the LLM."""
