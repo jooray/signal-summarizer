@@ -18,6 +18,7 @@ config-*.json.*
 resume.json
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # Benchmark fixtures and outputs contain real conversation content
 bench/fixtures/
