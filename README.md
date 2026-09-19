@@ -325,8 +325,16 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
 
 ### Configuration Breakdown
 
-- **themes_recombination**: Contains settings for the recombination of themes using an LLM-based similarity prompt.
+- **themes_recombination**: Contains settings for the recombination of themes.
 
+  - **engine**: Which matching engine decides that two themes are the same topic. `"llm"` (default) is the existing path: embedding clustering or nearest-neighbour retrieval plus LLM pair verdicts when `embedding_clustering.enabled` is true, otherwise the iterative similarity prompt below. `"decision"` uses a typed-decision model (Venice's Jev) to score every theme pair and group them; the chat model in `model` then only writes the merged summaries. Switch back to `"llm"` at any time — both engines read the same `merging_prompt`.
+  - **decision**: Settings for the `"decision"` engine.
+    - **model**: Name of a `models` entry with `"provider": "venice-decision"`.
+    - **merge_threshold**: Minimum pair score on the 0–4 rubric (unrelated / same domain / related but distinct / same concrete topic / same discussion) for two themes to be grouped. The scale is compressed; 2.4 caught every labelled merge and no hard negative on the benchmark fixture (`bench/JEV_BENCHMARK_2026-09-19.md`). Recalibrate if Jev's answers shift.
+    - **veto_threshold**: A pair whose weaker direction scores below this can never be grouped (default 1.5).
+    - **linkage**: `"complete"` (default; every pair in a group must clear the threshold), `"average"`, or `"single"` (union-find, chains A~B, B~C into umbrellas).
+    - **fallback_to_llm**: When true (default), a failing decision endpoint logs an error and the `"llm"` engine runs instead of aborting the summary. Jev is a beta model whose request schema may change.
+    - **max_questions_per_request**, **parallel_requests**: Request shaping; the defaults (100, 4) keep each request under the model's token limit and the key under its rate limit.
   - **similarity_threshold**: Specifies the minimum similarity rating required to merge themes during the recombination phase. The default value is 4. The similarity rating ranges from 1 to 6, where:
 
     - **1** - No similarity  
@@ -360,7 +368,7 @@ The tool is configured via a `config.json` file. You can specify defaults and ov
   - **sliding_window.window_size**: Number of recent themes to expose to the next chunk.
   - **sliding_window.prompt**: Prompt used when the model decides whether to update or create themes.
 
-- **models**: Define all LLM models you intend to use, specifying their providers (`ollama`, `venice`, or `openai`), endpoints, and necessary credentials.
+- **models**: Define all models you intend to use, specifying their providers (`ollama`, `venice`, `openai`, or `venice-decision`), endpoints, and necessary credentials. A `venice-decision` entry is Venice's typed-decision model (`jev-latest`, `POST /decisions`): it returns probabilities rather than text and is only used where `engine` is set to `"decision"`. Its optional `min_request_interval` (seconds between request starts, default 0.65) keeps one process under the 100 requests/minute limit; lower it only if nothing else uses the same key.
 
 - **Other configurations**: As described in the initial documentation.
 

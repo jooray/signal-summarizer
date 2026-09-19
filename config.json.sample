@@ -26,6 +26,13 @@
         "model": "llama-3.3-70b",
         "apiBase": "https://api.venice.ai/api/v1",
         "apiKey": "your-venice-api-key"
+      },
+      "jev": {
+        "provider": "venice-decision",
+        "model": "jev-latest",
+        "apiBase": "https://api.venice.ai/api/v1",
+        "apiKey": "your-venice-api-key",
+        "min_request_interval": 0.65
       }
     },
     "themes": {
@@ -61,7 +68,15 @@
       "nn_similarity_floor": 0.0
     },
     "themes_recombination": {
+      "engine": "llm",
       "model": "local-llama",
+      "decision": {
+        "model": "jev",
+        "merge_threshold": 2.4,
+        "veto_threshold": 1.5,
+        "linkage": "complete",
+        "fallback_to_llm": true
+      },
       "batch_size": 5,
       "max_iterations": 8,
       "convergence_threshold": 3,

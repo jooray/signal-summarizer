@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import group_summarizer as gs  # noqa: E402
 from group_summarizer import setup_logging, load_config, get_group_config  # noqa: E402
 from llm_util import LLMUtil, ConversationThemes  # noqa: E402
+from decision_util import DecisionClient, DECISION_PROVIDERS  # noqa: E402
 
 # Parameters mirror run-summarization-test.sh so the comparison matches the
 # knobs that script sweeps.
@@ -26,6 +27,8 @@ METHODS = {
     "dbscan": {"method": "dbscan", "eps": 0.3, "min_samples": 2},
     "hdbscan": {"method": "hdbscan", "min_cluster_size": 2, "hdbscan_min_samples": 1},
     "louvain": {"method": "louvain", "similarity_threshold": 0.5, "resolution": 1.0},
+    "nn-llm": {"method": "nn-llm"},
+    "decision": {"engine": "decision"},  # Jev pair scoring; needs a venice-decision model
 }
 
 
@@ -86,7 +89,10 @@ def main():
 
     config = load_config(args.config)
     base_group_config = get_group_config(config, fx["group_id"])
-    llm_dict = {n: LLMUtil(c) for n, c in base_group_config.get("models", {}).items()}
+    llm_dict = {n: (DecisionClient(c) if c.get("provider") in DECISION_PROVIDERS else LLMUtil(c))
+                for n, c in base_group_config.get("models", {}).items()}
+    decision_model = base_group_config["themes_recombination"].get("decision", {}).get("model")
+    decision_client = llm_dict.get(decision_model)
     recomb_llm = llm_dict[base_group_config["themes_recombination"]["model"]]
 
     outdir = Path(args.outdir)
@@ -95,6 +101,9 @@ def main():
 
     for method in args.methods:
         overrides = METHODS[method]
+        if overrides and overrides.get("engine") == "decision" and decision_client is None:
+            print(f"\nskipping {method}: no venice-decision model in themes_recombination.decision.model")
+            continue
         print(f"\n{'=' * 60}\n  {method}\n{'=' * 60}")
 
         random.seed(args.seed)
@@ -108,12 +117,16 @@ def main():
             )
             elapsed, calls, detail = 0.0, 0, {}
         else:
-            ec = gc.setdefault("embedding_clustering", {})
-            ec["enabled"] = True
-            ec.update(overrides)
+            if overrides.get("engine") == "decision":
+                gc["themes_recombination"]["engine"] = "decision"
+            else:
+                gc["themes_recombination"]["engine"] = "llm"
+                ec = gc.setdefault("embedding_clustering", {})
+                ec["enabled"] = True
+                ec.update(overrides)
             t0 = time.time()
             with CallCounter() as cc:
-                merged = gs.recombine_themes(sets, gc, recomb_llm)
+                merged = gs.recombine_themes(sets, gc, recomb_llm, decision=decision_client)
             elapsed, calls, detail = time.time() - t0, cc.total, dict(cc.calls)
 
         n_out = len(merged.themes) if merged else 0

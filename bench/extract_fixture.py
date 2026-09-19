@@ -57,7 +57,9 @@ def main():
     models_cfg = copy.deepcopy(group_config.get("models", {}))
     for c in models_cfg.values():
         c["request_timeout"] = args.request_timeout
-    llm_dict = {n: LLMUtil(c) for n, c in models_cfg.items()}
+    from decision_util import DecisionClient, DECISION_PROVIDERS
+    llm_dict = {n: (DecisionClient(c) if c.get("provider") in DECISION_PROVIDERS else LLMUtil(c))
+                for n, c in models_cfg.items()}
     themes_llm = llm_dict[group_config["themes"]["model"]]
 
     chunks = build_conversation_chunks(messages, group_config, llm_dict)

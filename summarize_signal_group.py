@@ -87,11 +87,17 @@ def main():
     else:
         stt_model = None
 
-    # Instantiate all LLM models
+    # Instantiate all models. Decision models (Venice's Jev) share the
+    # dictionary but are DecisionClient instances, not chat LLMs.
+    from decision_util import DECISION_PROVIDERS, DecisionClient
+
     models_config = config.get('defaults', {}).get('models', {})
     llm_dict = {}
     for model_name, model_config in models_config.items():
-        llm_dict[model_name] = LLMUtil(model_config)
+        if model_config.get('provider') in DECISION_PROVIDERS:
+            llm_dict[model_name] = DecisionClient(model_config)
+        else:
+            llm_dict[model_name] = LLMUtil(model_config)
 
     for group_id in group_ids:
         summarize_group(config, args, group_id, llm_dict, vision_util, stt_model, resume_data, resume_file)

@@ -1186,17 +1186,207 @@ def nn_llm_merge(themes_list, group_config, merging_prompt_template, llm):
     return ConversationThemes(themes=final_themes)
 
 
-def recombine_themes(themes_list, group_config, llm):
+DECISION_RUBRIC = [
+    "Unrelated",
+    "Same broad domain only; should stay separate",
+    "Related but still distinct; should stay separate",
+    "Same concrete topic, one a narrow subset or example of the other",
+    "Essentially the same discussion or a direct continuation",
+]
+DECISION_RELATE_QUESTION = "How does the TARGET THEME relate to this CANDIDATE THEME?"
+
+
+def decision_merge(themes_list, group_config, merging_prompt_template, llm, decision):
+    """Merge via a typed-decision model (Jev) instead of embeddings + LLM verdicts.
+
+    1. One request per theme: the theme is the state, and one `score` question
+       per other theme (candidate text inside the question) asks where the pair
+       sits on DECISION_RUBRIC. The answers fill a directed matrix; a pair's
+       score is the mean of its two directions.
+    2. A pair whose weaker direction is below `veto_threshold` is pinned to 0
+       (the production "unrelated" veto).
+    3. Agglomerative grouping over the matrix at `merge_threshold` with the
+       configured linkage. Complete linkage (every pair in a group must clear
+       the threshold) is the default: single linkage chains A~B, B~C into
+       umbrellas.
+    4. Each multi-theme group is merged with the standard merging prompt.
+
+    Benchmarked in bench/JEV_BENCHMARK_2026-09-19.md: threshold 2.4 on the
+    0-4 rubric catches every hand-labelled merge candidate on the fixture and
+    no hard negative; the scale is compressed, so do not expect 3.5+.
+
+    Returns a ConversationThemes, or None when there is nothing to merge.
+    Raises DecisionError when the decision endpoint fails; the caller decides
+    whether to fall back to the LLM engine.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import numpy as np
+    from decision_util import DecisionError
+
+    all_themes = []
+    for tset in themes_list:
+        if tset and tset.themes:
+            all_themes.extend(tset.themes)
+
+    if not all_themes:
+        return None
+    if len(all_themes) == 1:
+        return ConversationThemes(themes=list(all_themes))
+
+    cfg = group_config.get("themes_recombination", {}).get("decision", {})
+    merge_threshold = float(cfg.get("merge_threshold", 2.4))
+    veto_threshold = float(cfg.get("veto_threshold", 1.5))
+    linkage = cfg.get("linkage", "complete")
+    rubric = cfg.get("rubric") or DECISION_RUBRIC
+    question = cfg.get("question") or DECISION_RELATE_QUESTION
+    max_questions = int(cfg.get("max_questions_per_request", 100))
+    workers = int(cfg.get("parallel_requests", 4))
+    if linkage not in ("single", "complete", "average"):
+        raise ValueError(f"Unsupported decision linkage: {linkage}")
+
+    n = len(all_themes)
+    texts = [
+        f"Name: {capitalize_theme_name(t.name)}\nSummary: {t.summary}" for t in all_themes
+    ]
+    scores = np.full((n, n), np.nan)
+
+    def score_target(i):
+        others = [j for j in range(n) if j != i]
+        answers = {}
+        for start in range(0, len(others), max_questions):
+            batch = others[start:start + max_questions]
+            questions = {
+                f"s{j}": {
+                    "type": "score",
+                    "instructions": f"{question}\nCANDIDATE THEME:\n{texts[j]}",
+                    "criteria": rubric,
+                }
+                for j in batch
+            }
+            answers.update(decision.decide(f"TARGET THEME:\n{texts[i]}", questions))
+        row = {}
+        for j in others:
+            answer = answers.get(f"s{j}", {})
+            if "score" not in answer:
+                raise DecisionError(
+                    f"Missing score for theme pair ({i + 1}, {j + 1}): {answer}"
+                )
+            row[j] = float(answer["score"])
+        return i, row
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for i, row in pool.map(score_target, range(n)):
+            for j, value in row.items():
+                scores[i, j] = value
+
+    sym = (scores + scores.T) / 2
+    weaker = np.minimum(scores, scores.T)
+    sym[weaker < veto_threshold] = 0.0
+    np.fill_diagonal(sym, len(rubric) - 1)
+
+    # Agglomerative grouping on distance = (top level - score).
+    top = len(rubric) - 1
+    if linkage == "single":
+        parent = list(range(n))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if sym[i, j] >= merge_threshold:
+                    ra, rb = find(i), find(j)
+                    if ra != rb:
+                        parent[ra] = rb
+        labels = [find(i) for i in range(n)]
+    else:
+        from sklearn.cluster import AgglomerativeClustering
+
+        distance = np.clip(top - sym, 0.0, None)
+        distance = (distance + distance.T) / 2
+        np.fill_diagonal(distance, 0.0)
+        clusterer = AgglomerativeClustering(
+            n_clusters=None,
+            metric="precomputed",
+            linkage=linkage,
+            # fcluster-style: pairs strictly farther than this stay apart.
+            distance_threshold=(top - merge_threshold) + 1e-9,
+        )
+        labels = clusterer.fit_predict(distance).tolist()
+
+    groups = {}
+    for idx, label in enumerate(labels):
+        groups.setdefault(label, []).append(idx)
+    groups = sorted(groups.values(), key=lambda g: g[0])
+    merged_groups = [g for g in groups if len(g) > 1]
+    logging.info(
+        "Decision merge: %d themes -> %d topics (%d merged groups, largest %d) "
+        "at threshold %.2f/%d, %s linkage, veto <%.2f; %d requests, %d input tokens",
+        n, len(groups), len(merged_groups),
+        max(len(g) for g in groups), merge_threshold, top, linkage, veto_threshold,
+        decision.requests, decision.input_tokens,
+    )
+
+    final_themes = []
+    for group in groups:
+        if len(group) == 1:
+            final_themes.append(all_themes[group[0]])
+            continue
+        logging.info(
+            "Merging decision group: %s", [all_themes[i].name for i in group]
+        )
+        final_themes.append(
+            merge_themes_with_prompt(
+                [all_themes[i] for i in group], llm, merging_prompt_template
+            )
+        )
+    return ConversationThemes(themes=final_themes)
+
+
+def recombine_themes(themes_list, group_config, llm, decision=None):
     """
     This is the main entry point for recombining themes.
-    If embedding_clustering is enabled, we first do an embedding-based
-    clustering + partial merges, then we can optionally refine further
-    (if you want more merges across clusters, you can do that, but by default,
-    we only do merges within each cluster).
+
+    `themes_recombination.engine` selects the matching engine:
+      "llm" (default): the existing path — embedding clustering / NN retrieval
+        + LLM verdicts when embedding_clustering is enabled, otherwise the
+        iterative random-batch similarity prompt.
+      "decision": a typed-decision model scores every theme pair and groups
+        them (see decision_merge); the LLM only writes the merged summaries.
+        Needs `decision` (a DecisionClient). When the endpoint fails and
+        `decision.fallback_to_llm` is true (default), the "llm" engine runs.
     """
     recombination_config = group_config.get("themes_recombination", {})
     similarity_prompt_template = recombination_config.get("similarity_prompt", "")
     merging_prompt_template = recombination_config.get("merging_prompt", "")
+
+    engine = recombination_config.get("engine", "llm")
+    if engine == "decision":
+        from decision_util import DecisionError
+
+        if decision is None:
+            raise ValueError(
+                "themes_recombination.engine is 'decision' but no decision model is "
+                "configured: set themes_recombination.decision.model to a models "
+                "entry with provider 'venice-decision'"
+            )
+        logging.info("Using decision-model theme matching (%s)", decision.model)
+        try:
+            return decision_merge(
+                themes_list, group_config, merging_prompt_template, llm, decision
+            )
+        except DecisionError as e:
+            decision_config = recombination_config.get("decision", {})
+            if not decision_config.get("fallback_to_llm", True):
+                raise
+            logging.error(
+                "Decision-model matching failed, falling back to the llm engine: %s", e
+            )
+    elif engine != "llm":
+        raise ValueError(f"Unsupported themes_recombination.engine: {engine}")
 
     embedding_clustering_config = group_config.get("embedding_clustering", {})
     if embedding_clustering_config.get("enabled", False):
@@ -1514,8 +1704,18 @@ def summarize_group(
     themes_model_name = group_config.get("themes", {}).get("model")
     themes_llm = llm_dict.get(themes_model_name)
 
-    recombination_model_name = group_config.get("themes_recombination", {}).get("model")
+    recombination_config = group_config.get("themes_recombination", {})
+    recombination_model_name = recombination_config.get("model")
     recombination_llm = llm_dict.get(recombination_model_name)
+    decision_client = None
+    if recombination_config.get("engine", "llm") == "decision":
+        decision_model_name = recombination_config.get("decision", {}).get("model")
+        decision_client = llm_dict.get(decision_model_name)
+        if decision_client is None or not hasattr(decision_client, "decide"):
+            raise ValueError(
+                f"themes_recombination.engine is 'decision' but decision.model "
+                f"{decision_model_name!r} is not a configured 'venice-decision' model"
+            )
 
     translation_model_name = group_config.get("translation", {}).get("model")
     translation_llm = llm_dict.get(translation_model_name)
@@ -1617,7 +1817,9 @@ def summarize_group(
         final_themes = ConversationThemes(**final_themes_dict)
         logging.info(f"Loaded final themes from resume data for group {group_id}")
     else:
-        final_themes = recombine_themes(summaries, group_config, recombination_llm)
+        final_themes = recombine_themes(
+            summaries, group_config, recombination_llm, decision=decision_client
+        )
         # Convert to serializable format
         final_themes_dict = final_themes.dict() if final_themes else {}
         group_resume_data["final_themes"] = final_themes_dict
