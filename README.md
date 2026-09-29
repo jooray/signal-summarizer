@@ -2,6 +2,22 @@
 
 A tool to summarize messages from Signal groups using large language models (LLMs). The script processes messages stored in an SQLite database, handles attachments (images and audio), extracts and summarizes links, and generates a summary in Markdown format.
 
+<!-- jooray-links:start -->
+### More from me
+
+**Related projects**
+
+- [signal-message-processor](https://github.com/jooray/signal-message-processor): process Signal group messages and attachments
+- [signal-monitoring](https://github.com/jooray/signal-monitoring): server monitoring with signal-cli notifications
+- [simple-signal-rest-send](https://github.com/jooray/simple-signal-rest-send): a simple REST API for sending Signal notifications
+- [ha-simplex](https://github.com/jooray/ha-simplex): SimpleX notifications for Home Assistant
+- [simplex-ws-docker](https://github.com/jooray/simplex-ws-docker): Docker image for the SimpleX chat WebSocket bot interface
+
+**Full project showcase:** [Signal Summarizer in my project showcase](https://juraj.bednar.io/showcase/#AI-04), or [all my projects](https://juraj.bednar.io/showcase/).
+
+I write about building things on [my blog](https://juraj.bednar.io/en/blog-en/). I also wrote a cypherpunk novel, [Tamers of Entropy](https://tamersofentropy.net/), and there is a [trailer](https://tamersofentropy.net/#trailer).
+<!-- jooray-links:end -->
+
 ## It is a bit clever 😅
 
 It can use fully local models. For understanding images, it uses multimodal models through [ollama](https://ollama.com/).
